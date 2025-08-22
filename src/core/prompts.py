@@ -3,9 +3,10 @@ AI Prompts Configuration
 专门的AI提示词配置文件
 """
 
+
 class PromptTemplates:
     """AI提示词模板类"""
-    
+
     # 单篇文章专门总结提示词（英文版）
     SINGLE_ARTICLE_SUMMARY = """
 Please create a high-quality WeChat sharing content for the following news article. Requirements:
@@ -79,7 +80,7 @@ Must be one of the provided categories exactly as written.
     ARTICLE_TAGS = """
 Analyze the content and add appropriate tags based on:
 - Main topics and themes
-- Key concepts and terminology 
+- Key concepts and terminology
 - Target audience and purpose
 - Technical depth and domain
 - 2-4 tags are enough
@@ -129,29 +130,31 @@ Response must be in Chinese.
         "content_strategist": "You are a professional content strategist who excels at transforming news content into valuable and insightful social media content. You need to deeply analyze the core value of news and provide unique insights and thinking perspectives.",
         "news_summarizer": "You are a professional news summarization assistant who excels at summarizing news content into concise and readable WeChat messages.",
         "content_analyst": "You are a professional content analyst who can accurately categorize and evaluate article content.",
-        "confucius": "You are Confucius, the great Chinese philosopher and educator. You will comment on modern events from your perspective of wisdom and moral philosophy."
+        "confucius": "You are Confucius, the great Chinese philosopher and educator. You will comment on modern events from your perspective of wisdom and moral philosophy.",
     }
 
     @classmethod
-    def get_single_article_prompt(cls, title: str, content: str, link: str, min_length: int, max_length: int) -> str:
+    def get_single_article_prompt(
+        cls, title: str, content: str, link: str, min_length: int, max_length: int
+    ) -> str:
         """获取单篇文章总结提示词"""
         return cls.SINGLE_ARTICLE_SUMMARY.format(
             title=title,
             content=content,
             link=link,
             min_length=min_length,
-            max_length=max_length
+            max_length=max_length,
         )
-    
+
     @classmethod
-    def get_multiple_articles_prompt(cls, articles_text: str, min_length: int, max_length: int) -> str:
+    def get_multiple_articles_prompt(
+        cls, articles_text: str, min_length: int, max_length: int
+    ) -> str:
         """获取多篇文章汇总提示词"""
         return cls.MULTIPLE_ARTICLES_SUMMARY.format(
-            articles_text=articles_text,
-            min_length=min_length,
-            max_length=max_length
+            articles_text=articles_text, min_length=min_length, max_length=max_length
         )
-    
+
     @classmethod
     def get_system_role(cls, role_type: str) -> str:
         """获取系统角色定义"""

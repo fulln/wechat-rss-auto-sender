@@ -1,28 +1,50 @@
 """
-微信RSS新闻自动推送服务
+WeChat RSS Auto Sender - 微信RSS自动推送服务
 
-一个自动获取RSS新闻并通过微信发送AI总结的Python服务。
+模块化架构:
+- core: 核心配置和工具类
+- services: 业务服务层
+- integrations: 外部系统集成
+- models: 数据模型 (预留)
 """
 
-__version__ = "0.1.0"
-__author__ = "Developer"
+__version__ = "2.0.0"
+__author__ = "WeChat RSS Auto Sender Team"
 __email__ = "dev@example.com"
 
+# 核心模块
+from .core import Config, PromptTemplates, setup_logger
+
+# 外部集成
+from .integrations import WeChatSender
+
+# 主程序入口
 from .main import main
-from .config import Config
-from .rss_fetcher import RSSFetcher, RSSItem
-from .summarizer import Summarizer
-from .wechat_sender import WeChatSender
-from .scheduler import NewsScheduler
-from .send_manager import SendManager
+
+# 业务服务
+from .services import (
+    NewsScheduler,
+    RSSCache,
+    RSSFetcher,
+    RSSItem,
+    SendManager,
+    Summarizer,
+)
 
 __all__ = [
-    "main",
-    "Config", 
+    # Core
+    "Config",
+    "setup_logger",
+    "PromptTemplates",
+    # Services
     "RSSFetcher",
     "RSSItem",
+    "RSSCache",
     "Summarizer",
-    "WeChatSender", 
+    "SendManager",
     "NewsScheduler",
-    "SendManager"
+    # Integrations
+    "WeChatSender",
+    # Main
+    "main",
 ]

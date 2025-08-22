@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "wechat-rss-auto-sender"
 version = "0.1.0"
 description = "自动获取RSS新闻并通过微信发送AI总结的服务"
-authors = [{name = "Developer", email = "dev@example.com"}]
+authors = [{name = "fulln", email = "a114mypr1nt@gmail.com"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.8"

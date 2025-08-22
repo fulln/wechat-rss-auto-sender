@@ -124,7 +124,6 @@ cache/
 *.log
 
 # Sensitive information
-.env*
 config/secrets.json
 secrets.yaml
 api_keys.txt
