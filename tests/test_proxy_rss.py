@@ -23,7 +23,8 @@ def test_proxy_config():
     
     # 获取配置
     proxies = Config.get_proxies()
-    url = Config.RSS_FEED_URL
+    urls = Config.get_rss_feed_urls()
+    url = urls[0] if urls else "https://36kr.com/feed"  # 使用第一个URL作为测试
     
     print(f"RSS URL: {url}")
     print(f"代理配置: {proxies}")

@@ -45,7 +45,7 @@ def mock_env_vars(monkeypatch):
     test_vars = {
         "OPENAI_API_KEY": "test-api-key",
         "WECHAT_CONTACT_NAME": "测试联系人",
-        "RSS_FEED_URL": "https://test.example.com/feed",
+        "RSS_FEED_URLS": "https://test.example.com/feed;https://test2.example.com/feed",
         "CHECK_INTERVAL_MINUTES": "10",
         "LOG_LEVEL": "DEBUG",
         "WECHAT_OFFICIAL_APP_ID": "test_app_id",

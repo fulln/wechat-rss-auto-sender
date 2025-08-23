@@ -14,7 +14,7 @@ class TestConfig:
     def test_default_values(self) -> None:
         """测试默认配置值"""
         assert Config.WECHAT_CONTACT_NAME == "文件传输助手"
-        assert Config.RSS_FEED_URL == "https://36kr.com/feed-article"
+        assert Config.RSS_FEED_URLS == ""  # 默认为空，需要用户配置
         assert Config.CHECK_INTERVAL_MINUTES == 5
         assert Config.SUMMARY_MIN_LENGTH == 150
         assert Config.SUMMARY_MAX_LENGTH == 300

@@ -9,8 +9,8 @@ import schedule
 
 from ..core.config import Config
 from ..core.utils import setup_logger
-from .rss_service import RSSFetcher
 from .send_service import SendManager
+from .multi_rss_manager import MultiRSSManager
 
 logger = setup_logger(__name__)
 
@@ -19,7 +19,8 @@ class NewsScheduler:
     """新闻推送调度器"""
 
     def __init__(self):
-        self.rss_fetcher = RSSFetcher()
+        # 使用多RSS管理器
+        self.multi_rss_manager = MultiRSSManager()
         self.send_manager = SendManager()
         self.is_running = False
         self._thread = None
@@ -29,9 +30,9 @@ class NewsScheduler:
         try:
             logger.info("开始检查RSS更新...")
 
-            # 获取最新文章
-            items = self.rss_fetcher.fetch_latest_items(
-                since_minutes=Config.CHECK_INTERVAL_MINUTES, enable_dedup=True
+            # 使用多RSS管理器获取最新文章
+            items = self.multi_rss_manager.fetch_latest_items(
+                since_minutes=Config.CHECK_INTERVAL_MINUTES * 60  # 转换为分钟
             )
 
             if not items:
@@ -112,9 +113,12 @@ class NewsScheduler:
                 logger.error("所有发送器连接失败")
                 return
 
-            # 测试RSS获取
-            feed_info = self.rss_fetcher.get_feed_info()
-            logger.info(f"RSS源: {feed_info.get('title', '未知')}")
+            # 测试RSS源连接
+            rss_sources = self.multi_rss_manager.rss_sources
+            if rss_sources:
+                logger.info(f"已配置 {len(rss_sources)} 个RSS源，第一个源: {rss_sources[0].name}")
+            else:
+                logger.warning("未配置RSS源")
 
             # 配置定时任务
             # 每隔检查间隔时间运行一次完整周期

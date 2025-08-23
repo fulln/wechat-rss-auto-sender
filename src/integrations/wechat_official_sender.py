@@ -53,8 +53,8 @@ class WeChatOfficialSender(BaseSender):
             
             article_type = kwargs.get('type', 'draft')  # draft 或 publish
             title = kwargs.get('title', self._extract_title(message))
-            content = self._format_content(message)
             rss_item = kwargs.get('rss_item')  # RSS条目对象，包含图片信息
+            content = self._format_content(message, rss_item=rss_item)
             
             logger.info(f"准备发布微信公众号文章: {title[:30]}...")
             
@@ -68,9 +68,9 @@ class WeChatOfficialSender(BaseSender):
                     logger.warning("封面图片上传失败")
             
             if article_type == 'draft':
-                result = self._create_draft_v2(title, content, thumb_media_id)
+                result = self._create_draft_v2(title, content, thumb_media_id, rss_item)
             else:
-                result = self._publish_article_v2(title, content, thumb_media_id)
+                result = self._publish_article_v2(title, content, thumb_media_id, rss_item)
                 
             if result:
                 logger.info(f"微信公众号文章{article_type}成功")
@@ -206,7 +206,7 @@ class WeChatOfficialSender(BaseSender):
         """
         return self._upload_permanent_media(image_path, "image")
     
-    def _create_draft_v2(self, title: str, content: str, thumb_media_id: str = None) -> bool:
+    def _create_draft_v2(self, title: str, content: str, thumb_media_id: str = None, rss_item = None) -> bool:
         """
         创建草稿 (使用正式API)
         
@@ -214,6 +214,7 @@ class WeChatOfficialSender(BaseSender):
             title: 文章标题
             content: 文章内容 (HTML格式)
             thumb_media_id: 封面图片media_id
+            rss_item: RSS条目对象，包含原文链接
             
         Returns:
             是否创建成功
@@ -256,6 +257,12 @@ class WeChatOfficialSender(BaseSender):
                 author = "RSS Bot"  # 使用英文替代
             logger.debug(f"作者名称: '{author}' (长度: {len(author)})")
             
+            # 获取原文链接
+            content_source_url = ""
+            if rss_item and hasattr(rss_item, 'link') and rss_item.link:
+                content_source_url = rss_item.link
+                logger.info(f"设置原文链接: {content_source_url}")
+            
             article_data = {
                 "title": title,
                 "content": content,
@@ -264,7 +271,7 @@ class WeChatOfficialSender(BaseSender):
                 "show_cover_pic": 1,  # 显示封面
                 "need_open_comment": 1,  # 允许评论
                 "only_fans_can_comment": 0,  # 所有人可评论
-                "content_source_url": "",  # 原文链接
+                "content_source_url": content_source_url,  # 原文链接
             }
             # 不添加digest字段，让微信自动生成摘要
             
@@ -351,7 +358,7 @@ class WeChatOfficialSender(BaseSender):
         
         return digest
     
-    def _publish_article_v2(self, title: str, content: str, thumb_media_id: str = None) -> bool:
+    def _publish_article_v2(self, title: str, content: str, thumb_media_id: str = None, rss_item = None) -> bool:
         """
         发布文章 (先创建草稿再发布)
         
@@ -359,13 +366,14 @@ class WeChatOfficialSender(BaseSender):
             title: 文章标题
             content: 文章内容
             thumb_media_id: 封面图片media_id
+            rss_item: RSS条目对象，包含原文链接
             
         Returns:
             是否发布成功
         """
         try:
             # 先创建草稿
-            if not self._create_draft_v2(title, content, thumb_media_id):
+            if not self._create_draft_v2(title, content, thumb_media_id, rss_item):
                 return False
             
             # 获取草稿的media_id
@@ -395,7 +403,7 @@ class WeChatOfficialSender(BaseSender):
                 return clean_line[:64]  # 微信公众号标题长度限制
         return "科技资讯分享"
     
-    def _format_content(self, message: str) -> str:
+    def _format_content(self, message: str, rss_item = None) -> str:
         """格式化内容适配微信公众号HTML"""
         if not self.use_rich_formatting:
             # 简单格式化
@@ -403,6 +411,11 @@ class WeChatOfficialSender(BaseSender):
         
         # 丰富格式化
         sections = self._parse_message_sections(message)
+        
+        # 如果有RSS条目，添加原文链接到sections
+        if rss_item and hasattr(rss_item, 'link') and rss_item.link and not sections['link']:
+            sections['link'] = rss_item.link
+        
         html_content = self._build_html_content(sections)
         
         return html_content
@@ -528,86 +541,223 @@ class WeChatOfficialSender(BaseSender):
         return '\n'.join(html_parts)
     
     def _get_css_styles(self) -> str:
-        """获取CSS样式"""
+        """获取增强的CSS样式"""
         default_css = """
         <style>
         .article-container {
             max-width: 100%;
             margin: 0 auto;
             padding: 20px;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            line-height: 1.7;
+            color: #2c3e50;
+            background-color: #fdfdfd;
         }
         .article-title {
-            font-size: 22px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 15px;
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 20px;
             text-align: center;
-            line-height: 1.4;
+            line-height: 1.3;
+            padding: 0 10px;
+            position: relative;
+        }
+        .article-title::after {
+            content: '';
+            display: block;
+            width: 60px;
+            height: 3px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            margin: 15px auto 0;
+            border-radius: 2px;
         }
         .article-content {
             font-size: 16px;
             line-height: 1.8;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             text-align: justify;
+            color: #34495e;
+        }
+        .article-content p {
+            margin-bottom: 16px;
+            text-indent: 2em;
+        }
+        .article-content p:first-child {
+            font-size: 17px;
+            font-weight: 500;
+            color: #2980b9;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+            text-indent: 0;
+            margin-bottom: 20px;
         }
         .highlight-box {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+            position: relative;
+        }
+        .highlight-box::before {
+            content: '💡';
+            position: absolute;
+            top: -10px;
+            left: 20px;
+            background: white;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
         }
         .highlights-list {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            background-clip: text;
+            -webkit-background-clip: text;
             background-color: #f8f9fa;
-            border-left: 4px solid #007bff;
-            padding: 15px;
-            margin: 15px 0;
-            border-radius: 0 8px 8px 0;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            position: relative;
+        }
+        .highlights-list::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(45deg, #ff6b6b, #feca57, #48dbfb, #ff9ff3);
+            border-radius: 12px 12px 0 0;
         }
         .highlight-item {
-            margin: 8px 0;
-            padding-left: 10px;
+            margin: 12px 0;
+            padding: 8px 0 8px 15px;
             font-size: 15px;
+            color: #495057;
+            position: relative;
+            border-left: 3px solid transparent;
+            border-image: linear-gradient(45deg, #667eea, #764ba2) 1;
+        }
+        .highlight-item::before {
+            content: '▶';
+            color: #667eea;
+            font-size: 12px;
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
         }
         .tags-container {
-            margin: 20px 0;
+            margin: 25px 0;
             text-align: center;
+            padding: 15px;
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            border-radius: 12px;
         }
         .tag {
             display: inline-block;
-            background-color: #e3f2fd;
-            color: #1976d2;
-            padding: 5px 12px;
-            margin: 3px;
-            border-radius: 15px;
-            font-size: 14px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 8px 16px;
+            margin: 5px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
             text-decoration: none;
+            box-shadow: 0 3px 10px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s ease;
         }
         .read-more {
             text-align: center;
-            margin: 25px 0;
+            margin: 30px 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
         }
         .read-more a {
             display: inline-block;
-            background: linear-gradient(45deg, #ff6b6b, #feca57);
-            color: white;
-            padding: 12px 25px;
+            background: linear-gradient(45deg, #ffffff, #f8f9fa);
+            color: #667eea;
+            padding: 15px 30px;
             text-decoration: none;
             border-radius: 25px;
-            font-weight: bold;
-            transition: transform 0.3s ease;
+            font-weight: 600;
+            font-size: 16px;
+            box-shadow: 0 4px 15px rgba(255,255,255,0.3);
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        .read-more::before {
+            content: '📖 点击阅读完整原文';
+            display: block;
+            color: white;
+            font-size: 14px;
+            margin-bottom: 10px;
+            font-weight: 400;
         }
         .footer {
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
+            margin-top: 40px;
+            padding: 25px 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
             text-align: center;
-            color: #666;
+            color: #718096;
             font-size: 14px;
+            border-top: 3px solid transparent;
+            border-image: linear-gradient(45deg, #667eea, #764ba2) 1;
+        }
+        .footer p:first-child {
+            font-size: 16px;
+            color: #4a5568;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        /* 响应式设计 */
+        @media (max-width: 480px) {
+            .article-container {
+                padding: 15px;
+            }
+            .article-title {
+                font-size: 20px;
+            }
+            .article-content {
+                font-size: 15px;
+            }
+        }
+        /* 强调文本样式 */
+        strong {
+            color: #e74c3c;
+            font-weight: 600;
+        }
+        em {
+            color: #9b59b6;
+            font-style: normal;
+            background: linear-gradient(45deg, #f093fb, #f5576c);
+            background-clip: text;
+            -webkit-background-clip: text;
+            font-weight: 500;
+        }
+        /* 引用样式 */
+        blockquote {
+            border-left: 4px solid #3498db;
+            padding-left: 20px;
+            margin: 20px 0;
+            font-style: italic;
+            color: #5d6d7e;
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-radius: 0 8px 8px 0;
         }
         </style>
         """

@@ -95,11 +95,11 @@ class ImageDownloader:
                 elif hasattr(enclosure, 'href') and self._is_valid_image_url(enclosure.href):
                     image_candidates.append(enclosure.href)
         
-        # 2. 从media_content中获取
+        # 2. 从media_content中获取（改进版，支持大小选择）
         if hasattr(entry, 'media_content'):
-            for media in entry.media_content:
-                if hasattr(media, 'type') and media.type.startswith('image/'):
-                    image_candidates.append(media['url'])
+            best_media = self._select_best_media_content(entry.media_content)
+            if best_media:
+                image_candidates.append(best_media)
         
         # 3. 从media_thumbnail中获取
         if hasattr(entry, 'media_thumbnail'):
@@ -292,3 +292,97 @@ class ImageDownloader:
             logger.info(f"清理了 {deleted_count} 个旧图片文件")
         
         return deleted_count
+
+    def _select_best_media_content(self, media_list) -> Optional[str]:
+        """
+        从media:content列表中选择最佳图片
+        
+        Args:
+            media_list: media:content列表
+            
+        Returns:
+            最佳图片URL或None
+        """
+        from ..core.config import Config
+        
+        if not media_list:
+            return None
+        
+        # 收集所有图片候选
+        image_candidates = []
+        
+        for media in media_list:
+            # 检查是否是图片类型
+            if hasattr(media, 'type') and media.type and media.type.startswith('image/'):
+                url = media.get('url')
+                width = self._parse_width(media.get('width'))
+                height = self._parse_width(media.get('height'))
+                
+                if url:
+                    image_candidates.append({
+                        'url': url,
+                        'width': width,
+                        'height': height,
+                        'type': media.type
+                    })
+        
+        if not image_candidates:
+            return None
+        
+        # 根据宽度选择最佳图片
+        preferred_width = getattr(Config, 'PREFERRED_IMAGE_WIDTH', 460)
+        min_width = getattr(Config, 'MIN_IMAGE_WIDTH', 140)
+        max_width = getattr(Config, 'MAX_IMAGE_WIDTH', 700)
+        
+        # 筛选宽度符合要求的图片
+        valid_candidates = []
+        for candidate in image_candidates:
+            width = candidate['width']
+            if width is None:
+                # 如果没有宽度信息，保留候选
+                valid_candidates.append(candidate)
+            elif min_width <= width <= max_width:
+                valid_candidates.append(candidate)
+        
+        if not valid_candidates:
+            # 如果没有符合宽度要求的，返回第一个图片
+            logger.warning("没有找到符合宽度要求的图片，使用第一个可用图片")
+            return image_candidates[0]['url']
+        
+        # 选择最接近首选宽度的图片
+        def width_score(candidate):
+            width = candidate['width']
+            if width is None:
+                return float('inf')  # 无宽度信息的图片优先级较低
+            return abs(width - preferred_width)
+        
+        best_candidate = min(valid_candidates, key=width_score)
+        
+        logger.info(f"选择最佳图片: 宽度={best_candidate['width']}, URL={best_candidate['url']}")
+        return best_candidate['url']
+
+    def _parse_width(self, width_str) -> Optional[int]:
+        """
+        解析宽度字符串为整数
+        
+        Args:
+            width_str: 宽度字符串
+            
+        Returns:
+            宽度整数或None
+        """
+        if not width_str:
+            return None
+        
+        try:
+            # 处理字符串形式的数字
+            if isinstance(width_str, str):
+                # 移除单位（如px）
+                width_str = width_str.replace('px', '').strip()
+                return int(width_str)
+            elif isinstance(width_str, (int, float)):
+                return int(width_str)
+        except (ValueError, TypeError):
+            logger.debug(f"无法解析宽度: {width_str}")
+        
+        return None

@@ -9,7 +9,7 @@ from ..core.config import Config
 from ..core.utils import setup_logger
 from ..integrations.send_service_manager import SendServiceManager
 from .ai_service import Summarizer
-from .rss_service import RSSFetcher, RSSItem
+from .multi_rss_manager import MultiRSSManager, RSSItem
 
 logger = setup_logger(__name__)
 
@@ -18,7 +18,8 @@ class SendManager:
     """发送管理器 - 控制文章发送策略"""
 
     def __init__(self):
-        self.rss_fetcher = RSSFetcher()
+        # 使用多RSS管理器替代单一RSS获取器
+        self.multi_rss_manager = MultiRSSManager()
         self.summarizer = Summarizer()
         self.send_service_manager = SendServiceManager()
         self.last_send_time: Optional[datetime] = None
@@ -115,7 +116,7 @@ class SendManager:
     def select_articles_to_send(self, max_count: int = None) -> List[RSSItem]:
         """选择要发送的文章（添加质量评分筛选，只发送高质量文章）"""
         # 获取未发送的文章
-        unsent_items = self.rss_fetcher.cache.get_unsent_items()
+        unsent_items = self.multi_rss_manager.cache.get_unsent_items()
 
         if not unsent_items:
             logger.info("没有待发送的文章")
@@ -133,7 +134,7 @@ class SendManager:
                     score = self.summarizer.score_article(article)
                     article.set_quality_score(score)
                     # 更新缓存中的评分信息
-                    self.rss_fetcher.cache.update_item_sent_status(article)
+                    self.multi_rss_manager.cache.update_item_sent_status(article)
                 else:
                     score = article.quality_score
                     logger.info(f"使用已有评分: {article.title[:50]}... (评分: {score}/10)")
@@ -177,10 +178,17 @@ class SendManager:
             return False
 
         try:
+            # 记录发送尝试
+            article.mark_send_attempt()
+            self.multi_rss_manager.cache.update_item_sent_status(article)
+            
             # 使用新的单篇文章专门总结功能
             summary = self.summarizer.summarize_single_item(article)
 
             if not summary:
+                error_msg = "AI总结失败"
+                article.mark_send_failed(error_msg)
+                self.multi_rss_manager.cache.update_item_sent_status(article)
                 logger.warning(f"文章AI总结失败，跳过发送: {article.title}")
                 return False
 
@@ -193,7 +201,7 @@ class SendManager:
             if success:
                 # 标记文章为已发送
                 article.mark_as_sent()
-                self.rss_fetcher.cache.update_item_sent_status(article)
+                self.multi_rss_manager.cache.update_item_sent_status(article)
 
                 self.last_send_time = datetime.now()
 
@@ -205,10 +213,19 @@ class SendManager:
                 logger.info(f"成功发送文章: {title_preview}")
                 return True
             else:
-                logger.error(f"微信发送失败: {article.title}")
+                # 记录发送失败
+                failed_senders = [k for k, v in send_results.items() if not v] if send_results else ["all"]
+                error_msg = f"发送器失败: {', '.join(failed_senders)}"
+                article.mark_send_failed(error_msg)
+                self.multi_rss_manager.cache.update_item_sent_status(article)
+                logger.error(f"微信发送失败: {article.title} - {error_msg}")
                 return False
 
         except Exception as e:
+            # 记录发送异常
+            error_msg = f"发送异常: {str(e)}"
+            article.mark_send_failed(error_msg)
+            self.multi_rss_manager.cache.update_item_sent_status(article)
             logger.error(f"发送文章时出错: {e}")
             return False
 
@@ -256,10 +273,19 @@ class SendManager:
             return False
 
         try:
+            # 记录所有文章的发送尝试
+            for article in articles:
+                article.mark_send_attempt()
+                self.multi_rss_manager.cache.update_item_sent_status(article)
+            
             # 使用多篇文章总结
             summary = self.summarizer.summarize_items(articles)
 
             if not summary:
+                error_msg = "批量AI总结失败"
+                for article in articles:
+                    article.mark_send_failed(error_msg)
+                    self.multi_rss_manager.cache.update_item_sent_status(article)
                 logger.warning("AI总结失败，跳过发送")
                 return False
 
@@ -273,7 +299,7 @@ class SendManager:
                 # 标记文章为已发送
                 for article in articles:
                     article.mark_as_sent()
-                    self.rss_fetcher.cache.update_item_sent_status(article)
+                    self.multi_rss_manager.cache.update_item_sent_status(article)
 
                 self.last_send_time = datetime.now()
 
@@ -286,16 +312,27 @@ class SendManager:
                 logger.info(f"成功发送 {len(articles)} 篇文章: {', '.join(titles)}")
                 return True
             else:
-                logger.error("微信发送失败")
+                # 记录批量发送失败
+                failed_senders = [k for k, v in send_results.items() if not v] if send_results else ["all"]
+                error_msg = f"批量发送失败: {', '.join(failed_senders)}"
+                for article in articles:
+                    article.mark_send_failed(error_msg)
+                    self.multi_rss_manager.cache.update_item_sent_status(article)
+                logger.error(f"微信批量发送失败 - {error_msg}")
                 return False
 
         except Exception as e:
-            logger.error(f"发送文章时出错: {e}")
+            # 记录批量发送异常
+            error_msg = f"批量发送异常: {str(e)}"
+            for article in articles:
+                article.mark_send_failed(error_msg)
+                self.multi_rss_manager.cache.update_item_sent_status(article)
+            logger.error(f"批量发送文章时出错: {e}")
             return False
 
     def get_send_status(self) -> dict:
         """获取发送状态"""
-        unsent_count = len(self.rss_fetcher.cache.get_unsent_items())
+        unsent_count = len(self.multi_rss_manager.cache.get_unsent_items())
 
         return {
             "unsent_articles_count": unsent_count,

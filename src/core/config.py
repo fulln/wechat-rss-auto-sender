@@ -2,7 +2,7 @@
 配置管理模块
 """
 import os
-from typing import Optional
+from typing import Optional, List
 
 from dotenv import load_dotenv
 
@@ -17,9 +17,14 @@ class Config:
     WECHAT_CONTACT_NAME: str = os.getenv("WECHAT_CONTACT_NAME", "文件传输助手")
 
     # RSS配置
-    RSS_FEED_URL: str = os.getenv("RSS_FEED_URL", "https://36kr.com/feed")
+    RSS_FEED_URLS: str = os.getenv("RSS_FEED_URLS", "")  # 多RSS源，用分号分隔
     CHECK_INTERVAL_MINUTES: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "30"))  # RSS检查间隔
     FETCH_ARTICLES_HOURS: int = int(os.getenv("FETCH_ARTICLES_HOURS", "6"))  # 文章获取时间范围（小时）
+    
+    # 图片配置
+    PREFERRED_IMAGE_WIDTH: int = int(os.getenv("PREFERRED_IMAGE_WIDTH", "460"))  # 首选图片宽度
+    MIN_IMAGE_WIDTH: int = int(os.getenv("MIN_IMAGE_WIDTH", "140"))  # 最小图片宽度
+    MAX_IMAGE_WIDTH: int = int(os.getenv("MAX_IMAGE_WIDTH", "700"))  # 最大图片宽度
     
     # 代理配置
     HTTP_PROXY: Optional[str] = os.getenv("HTTP_PROXY")
@@ -103,6 +108,19 @@ class Config:
                 proxies['https'] = cls.HTTPS_PROXY
         
         return proxies
+
+    @classmethod
+    def get_rss_feed_urls(cls) -> List[str]:
+        """获取所有RSS源URL列表"""
+        urls = []
+        
+        # 解析多RSS源配置
+        if cls.RSS_FEED_URLS:
+            # 支持分号或逗号分隔
+            separator = ';' if ';' in cls.RSS_FEED_URLS else ','
+            urls = [url.strip() for url in cls.RSS_FEED_URLS.split(separator) if url.strip()]
+        
+        return urls
 
     @classmethod
     def get_sender_configs(cls) -> dict:

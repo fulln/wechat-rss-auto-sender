@@ -33,10 +33,20 @@ class RSSItem:
         self.quality_score: Optional[int] = None  # AI质量评分（0-10分）
         self.scored_time: Optional[datetime] = None  # 评分时间
         
+        # 发送状态详细记录
+        self.send_attempts: int = 0  # 发送尝试次数
+        self.last_attempt_time: Optional[datetime] = None  # 最后尝试时间
+        self.send_error: Optional[str] = None  # 发送错误信息
+        self.send_success: bool = False  # 发送是否成功
+        
         # 图片相关属性
         self.image_url: Optional[str] = None  # 原始图片URL
         self.local_image_path: Optional[str] = None  # 本地图片路径
         self.image_downloaded: bool = False  # 图片是否已下载
+        
+        # RSS源信息
+        self.source_name: Optional[str] = None  # RSS源名称
+        self.source_url: Optional[str] = None   # RSS源URL
 
     def _generate_title_hash(self, title: str) -> str:
         """生成标题的唯一标识符"""
@@ -45,9 +55,37 @@ class RSSItem:
         return hashlib.md5(cleaned_title.encode("utf-8")).hexdigest()[:16]
 
     def mark_as_sent(self) -> None:
-        """标记为已发送"""
+        """标记为已发送成功"""
         self.sent_status = True
         self.sent_time = datetime.now()
+        self.send_success = True
+        self.send_error = None
+
+    def mark_send_failed(self, error_message: str) -> None:
+        """标记发送失败"""
+        self.send_attempts += 1
+        self.last_attempt_time = datetime.now()
+        self.send_error = error_message
+        self.send_success = False
+        # 如果尝试次数过多，标记为已处理避免重复尝试
+        if self.send_attempts >= 3:
+            self.sent_status = True  # 标记为已处理，但不是成功发送
+
+    def mark_send_attempt(self) -> None:
+        """记录发送尝试"""
+        self.send_attempts += 1
+        self.last_attempt_time = datetime.now()
+
+    def should_retry_send(self) -> bool:
+        """判断是否应该重试发送"""
+        if self.sent_status:  # 已经处理过（成功或失败次数过多）
+            return False
+        if self.send_attempts >= 3:  # 最多尝试3次
+            return False
+        # 如果上次尝试时间距离现在不到5分钟，不重试
+        if self.last_attempt_time and (datetime.now() - self.last_attempt_time).total_seconds() < 300:
+            return False
+        return True
 
     def set_quality_score(self, score: int) -> None:
         """设置质量评分"""
@@ -85,9 +123,17 @@ class RSSItem:
             "sent_time": self.sent_time.isoformat() if self.sent_time else None,
             "quality_score": self.quality_score,
             "scored_time": self.scored_time.isoformat() if self.scored_time else None,
+            # 新增的发送状态字段
+            "send_attempts": self.send_attempts,
+            "last_attempt_time": self.last_attempt_time.isoformat() if self.last_attempt_time else None,
+            "send_error": self.send_error,
+            "send_success": self.send_success,
+            # 图片和源信息
             "image_url": self.image_url,
             "local_image_path": self.local_image_path,
             "image_downloaded": self.image_downloaded,
+            "source_name": self.source_name,
+            "source_url": self.source_url,
         }
 
     @classmethod
@@ -106,10 +152,22 @@ class RSSItem:
         if data.get("scored_time"):
             item.scored_time = datetime.fromisoformat(data["scored_time"])
         
+        # 恢复发送状态信息
+        item.send_attempts = data.get("send_attempts", 0)
+        if data.get("last_attempt_time"):
+            item.last_attempt_time = datetime.fromisoformat(data["last_attempt_time"])
+        item.send_error = data.get("send_error")
+        item.send_success = data.get("send_success", False)
+        
         # 恢复图片信息
         item.image_url = data.get("image_url")
         item.local_image_path = data.get("local_image_path")
         item.image_downloaded = data.get("image_downloaded", False)
+        
+        # 恢复源信息
+        item.source_name = data.get("source_name")
+        item.source_url = data.get("source_url")
+        
         return item
 
 
@@ -222,13 +280,13 @@ class RSSCache:
             # 获取指定日期的未发送文章
             if date_key in self.article_details:
                 for item in self.article_details[date_key].values():
-                    if not item.sent_status:
+                    if not item.sent_status and item.should_retry_send():
                         unsent_items.append(item)
         else:
             # 获取所有日期的未发送文章
             for date_articles in self.article_details.values():
                 for item in date_articles.values():
-                    if not item.sent_status:
+                    if not item.sent_status and item.should_retry_send():
                         unsent_items.append(item)
 
         # 按发布时间排序（最新的在前）
@@ -260,8 +318,10 @@ class RSSCache:
 class RSSFetcher:
     """RSS获取器"""
 
-    def __init__(self, feed_url: str = None):
-        self.feed_url = feed_url or Config.RSS_FEED_URL
+    def __init__(self, feed_url: str):
+        if not feed_url:
+            raise ValueError("RSS feed URL is required")
+        self.feed_url = feed_url
         self.last_check_time: Optional[datetime] = None
         self.cache = RSSCache()
         self.image_downloader = ImageDownloader()  # 初始化图片下载器
