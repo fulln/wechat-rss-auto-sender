@@ -30,9 +30,36 @@ class Summarizer:
         }
         if proxies:
             import httpx
-            client_kwargs["http_client"] = httpx.Client(proxies=proxies)
-            logger.info(f"Summarizer使用代理: {proxies}")
-        self.client = OpenAI(**client_kwargs)
+            # 尝试多种代理配置方式以兼容不同版本的httpx
+            try:
+                # 方式1: 使用proxy参数 (新版本)
+                proxy_url = proxies.get('https') or proxies.get('http')
+                if proxy_url:
+                    client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
+                    logger.info(f"Summarizer使用代理 (proxy): {proxy_url}")
+            except Exception as e1:
+                try:
+                    # 方式2: 使用proxies参数 (旧版本)
+                    client_kwargs["http_client"] = httpx.Client(proxies=proxies)
+                    logger.info(f"Summarizer使用代理 (proxies): {proxies}")
+                except Exception as e2:
+                    logger.warning(f"代理配置失败，使用默认连接. 错误1: {e1}, 错误2: {e2}")
+        
+        try:
+            self.client = OpenAI(**client_kwargs)
+        except Exception as e:
+            logger.error(f"OpenAI客户端初始化失败: {e}")
+            # 如果代理配置有问题，尝试不使用代理
+            if "proxies" in str(e) or "proxy" in str(e):
+                logger.info("尝试不使用代理重新初始化...")
+                client_kwargs_no_proxy = {
+                    "api_key": Config.OPENAI_API_KEY,
+                    "base_url": Config.OPENAI_BASE_URL
+                }
+                self.client = OpenAI(**client_kwargs_no_proxy)
+                logger.info("OpenAI客户端已使用默认连接初始化")
+            else:
+                raise
 
 
     def clean_html(self, text: str) -> str:

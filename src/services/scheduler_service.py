@@ -95,9 +95,21 @@ class NewsScheduler:
             # 测试各个组件
             logger.info("正在测试各个组件...")
 
-            # 测试微信连接
-            if not self.send_manager.wechat_sender.test_connection():
-                logger.error("微信连接失败，请确保微信已登录")
+            # 测试发送器连接
+            connection_results = self.send_manager.send_service_manager.test_all_connections()
+            if not connection_results:
+                logger.error("没有可用的发送器")
+                return
+            
+            failed_senders = [name for name, result in connection_results.items() if not result]
+            if failed_senders:
+                logger.warning(f"以下发送器连接失败: {', '.join(failed_senders)}")
+            
+            successful_senders = [name for name, result in connection_results.items() if result]
+            if successful_senders:
+                logger.info(f"以下发送器连接成功: {', '.join(successful_senders)}")
+            else:
+                logger.error("所有发送器连接失败")
                 return
 
             # 测试RSS获取

@@ -56,6 +56,26 @@ class Config:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE: str = os.getenv("LOG_FILE", "logs/app.log")
 
+    # 发送器配置
+    ENABLED_SENDERS: str = os.getenv("ENABLED_SENDERS", "wechat")  # 启用的发送器，逗号分隔
+    
+    # 微信发送器配置
+    WECHAT_SENDER_ENABLED: bool = os.getenv("WECHAT_SENDER_ENABLED", "true").lower() == "true"
+    
+    # 小红书发送器配置
+    XIAOHONGSHU_SENDER_ENABLED: bool = os.getenv("XIAOHONGSHU_SENDER_ENABLED", "false").lower() == "true"
+    XIAOHONGSHU_COOKIE: Optional[str] = os.getenv("XIAOHONGSHU_COOKIE")
+    XIAOHONGSHU_USER_AGENT: str = os.getenv("XIAOHONGSHU_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    XIAOHONGSHU_PUBLISH_DELAY: int = int(os.getenv("XIAOHONGSHU_PUBLISH_DELAY", "5"))
+    
+    # 微信公众号发送器配置
+    WECHAT_OFFICIAL_SENDER_ENABLED: bool = os.getenv("WECHAT_OFFICIAL_SENDER_ENABLED", "false").lower() == "true"
+    WECHAT_OFFICIAL_APP_ID: Optional[str] = os.getenv("WECHAT_OFFICIAL_APP_ID")
+    WECHAT_OFFICIAL_APP_SECRET: Optional[str] = os.getenv("WECHAT_OFFICIAL_APP_SECRET")
+    WECHAT_OFFICIAL_USE_RICH_FORMATTING: bool = os.getenv("WECHAT_OFFICIAL_USE_RICH_FORMATTING", "true").lower() == "true"
+    WECHAT_OFFICIAL_FOOTER_TEXT: str = os.getenv("WECHAT_OFFICIAL_FOOTER_TEXT", "📱 更多科技资讯，请关注我们")
+    WECHAT_OFFICIAL_AUTHOR_NAME: str = os.getenv("WECHAT_OFFICIAL_AUTHOR_NAME", "RSS助手")
+
     @classmethod
     def validate(cls) -> bool:
         """验证必要的配置项"""
@@ -83,3 +103,35 @@ class Config:
                 proxies['https'] = cls.HTTPS_PROXY
         
         return proxies
+
+    @classmethod
+    def get_sender_configs(cls) -> dict:
+        """获取所有发送器配置"""
+        return {
+            'wechat': {
+                'enabled': cls.WECHAT_SENDER_ENABLED,
+                'contact_name': cls.WECHAT_CONTACT_NAME
+            },
+            'xiaohongshu': {
+                'enabled': cls.XIAOHONGSHU_SENDER_ENABLED,
+                'cookie': cls.XIAOHONGSHU_COOKIE,
+                'user_agent': cls.XIAOHONGSHU_USER_AGENT,
+                'publish_delay': cls.XIAOHONGSHU_PUBLISH_DELAY
+            },
+            'wechat_official': {
+                'enabled': cls.WECHAT_OFFICIAL_SENDER_ENABLED,
+                'app_id': cls.WECHAT_OFFICIAL_APP_ID,
+                'app_secret': cls.WECHAT_OFFICIAL_APP_SECRET,
+                'use_rich_formatting': cls.WECHAT_OFFICIAL_USE_RICH_FORMATTING,
+                'footer_text': cls.WECHAT_OFFICIAL_FOOTER_TEXT,
+                'author_name': cls.WECHAT_OFFICIAL_AUTHOR_NAME
+            }
+        }
+    
+    @classmethod
+    def get_enabled_senders(cls) -> list:
+        """获取启用的发送器列表"""
+        enabled = cls.ENABLED_SENDERS.strip()
+        if not enabled:
+            return []
+        return [sender.strip() for sender in enabled.split(',')]

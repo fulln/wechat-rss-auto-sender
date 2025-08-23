@@ -26,7 +26,16 @@ wechat-rss-sender = "src.main:main"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --strict-markers --cov=src --cov-report=term-missing --cov-report=html"
+addopts = [
+    "-ra",                    # 显示所有测试结果的简短摘要
+    "-v",                     # 详细输出
+    "--tb=short",            # 简短的错误回溯
+    "--strict-markers",      # 严格标记模式
+    "--cov=src",             # 代码覆盖率
+    "--cov-report=term-missing",  # 显示缺失的覆盖行
+    "--cov-report=html:htmlcov",  # HTML覆盖率报告
+    "--disable-warnings"     # 禁用警告
+]
 testpaths = [
     "tests",
 ]
@@ -44,6 +53,24 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
+    "api: marks tests that require API access",
+    "network: marks tests that require network access",
+    "wechat: marks tests related to WeChat functionality",
+    "rss: marks tests related to RSS functionality",
+    "ai: marks tests related to AI/summarization functionality",
+    "mock: marks tests that use mocking",
+    "real: marks tests that require real API credentials",
+    "asyncio: marks tests as async tests"
+]
+# 异步测试支持
+asyncio_mode = "auto"
+# 测试超时
+timeout = 300
+# 过滤警告
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::UserWarning"
 ]
 
 [tool.black]

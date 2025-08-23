@@ -38,7 +38,7 @@ class TestRSSItem:
         assert item1.title_hash != item3.title_hash
 
     def test_to_dict(self) -> None:
-        """测试转换为字�?""
+        """测试转换为字"""
         published = datetime(2025, 8, 23, 12, 0, 0)
         item = RSSItem("测试", "https://test.com", "描述", published)
 
@@ -52,32 +52,32 @@ class TestRSSCache:
     """RSS缓存测试"""
 
     def setup_method(self) -> None:
-        """测试前设�?""
+        """测试前设"""
         self.temp_dir = tempfile.mkdtemp()
         self.cache = RSSCache(cache_dir=self.temp_dir)
 
     def teardown_method(self) -> None:
-        """测试后清�?""
+        """测试后清"""
         shutil.rmtree(self.temp_dir)
 
     def test_cache_initialization(self) -> None:
-        """测试缓存初始�?""
+        """测试缓存初始"""
         assert self.cache.cache_dir.exists()
         assert isinstance(self.cache.daily_cache, dict)
 
     def test_add_and_check_duplicate(self) -> None:
-        """测试添加和检查重�?""
+        """测试添加和检查重"""
         item = RSSItem("测试标题", "https://test.com", "描述", datetime.now())
 
-        # 首次添加，不应该是重�?
+        # 首次添加，不应该是重"
         assert not self.cache.is_duplicate(item)
         self.cache.add_item(item)
 
-        # 再次检查，应该是重�?
+        # 再次检查，应该是重"
         assert self.cache.is_duplicate(item)
 
     def test_different_dates_not_duplicate(self) -> None:
-        """测试不同日期的相同标题不算重�?""
+        """测试不同日期的相同标题不算重"""
         today = datetime.now()
         yesterday = today - timedelta(days=1)
 
@@ -89,14 +89,14 @@ class TestRSSCache:
 
 
 class TestRSSFetcher:
-    """RSS获取器测�?""
+    """RSS获取器测"""
 
     def setup_method(self) -> None:
-        """测试前设�?""
+        """测试前设"""
         self.temp_dir = tempfile.mkdtemp()
 
     def teardown_method(self) -> None:
-        """测试后清�?""
+        """测试后清"""
         shutil.rmtree(self.temp_dir)
 
     @patch("src.services.rss_service.requests.get")
@@ -120,7 +120,7 @@ class TestRSSFetcher:
         mock_feed = Mock()
         mock_feed.bozo = False
         mock_feed.entries = [mock_entry]
-        mock_feed.feed = {"title": "测试RSS�?}
+        mock_feed.feed = {"title": "测试RSS"}
 
         mock_parse.return_value = mock_feed
 
@@ -148,7 +148,7 @@ class TestRSSFetcher:
             assert len(items) == 0
 
     def test_get_cache_status(self) -> None:
-        """测试获取缓存状�?""
+        """测试获取缓存状"""
         with patch("src.services.rss_service.RSSCache") as mock_cache_class:
             mock_cache = Mock()
             mock_cache.cache_dir = self.temp_dir

@@ -8,7 +8,7 @@ from src.services.scheduler_service import NewsScheduler
 
 
 class TestIntegration:
-    """集成测试�?""
+    """集成测试"""
 
     @patch("src.services.send_service.WeChatSender")
     @patch("src.services.send_service.AISummarizer")
@@ -16,8 +16,8 @@ class TestIntegration:
     def test_complete_news_flow(
         self, mock_rss_class: Mock, mock_summarizer_class: Mock, mock_sender_class: Mock
     ) -> None:
-        """测试完整的新闻流�?""
-        # 模拟RSS获取�?
+        """测试完整的新闻流"""
+        # 模拟RSS获取"
         mock_items = [
             RSSItem(
                 title="测试新闻1",
@@ -35,10 +35,10 @@ class TestIntegration:
 
         mock_rss = Mock()
         mock_rss.fetch_latest_items.return_value = mock_items
-        mock_rss.get_feed_info.return_value = {"title": "测试RSS�?}
+        mock_rss.get_feed_info.return_value = {"title": "测试RSS"}
         mock_rss_class.return_value = mock_rss
 
-        # 模拟AI总结�?
+        # 模拟AI总结"
         mock_summarizer = Mock()
         mock_summarizer.summarize_with_quality_check.return_value = {
             "summary": "AI生成的高质量总结内容",
@@ -56,10 +56,10 @@ class TestIntegration:
         scheduler = NewsScheduler()
         scheduler.check_and_send_news()
 
-        # 验证调用�?
+        # 验证调用"
         mock_rss.fetch_latest_items.assert_called_once()
         mock_summarizer.summarize_items.assert_called_once_with(mock_items)
-        mock_sender.send_message.assert_called_once_with("AI生成的总结内容，包含新闻链�?)
+        mock_sender.send_message.assert_called_once_with("AI生成的总结内容，包含新闻链")
 
     @patch("src.scheduler.WeChatSender")
     @patch("src.scheduler.Summarizer")
@@ -68,7 +68,7 @@ class TestIntegration:
         self, mock_rss_class: Mock, mock_summarizer_class: Mock, mock_sender_class: Mock
     ) -> None:
         """测试没有新文章的流程"""
-        # 模拟没有新文�?
+        # 模拟没有新文"
         mock_rss = Mock()
         mock_rss.fetch_latest_items.return_value = []
         mock_rss_class.return_value = mock_rss
@@ -82,7 +82,7 @@ class TestIntegration:
         scheduler = NewsScheduler()
         scheduler.check_and_send_news()
 
-        # 验证没有调用总结和发�?
+        # 验证没有调用总结和发"
         mock_summarizer.summarize_items.assert_not_called()
         mock_sender.send_message.assert_not_called()
 
@@ -92,7 +92,7 @@ class TestIntegration:
     def test_summarizer_failure_flow(
         self, mock_rss_class: Mock, mock_summarizer_class: Mock, mock_sender_class: Mock
     ) -> None:
-        """测试AI总结失败的流�?""
+        """测试AI总结失败的流"""
         # 模拟RSS获取成功
         mock_items = [RSSItem("测试", "https://test.com", "描述", datetime.now())]
         mock_rss = Mock()
@@ -110,6 +110,6 @@ class TestIntegration:
         scheduler = NewsScheduler()
         scheduler.check_and_send_news()
 
-        # 验证没有发送消�?
+        # 验证没有发送消"
         mock_sender.send_message.assert_not_called()
 

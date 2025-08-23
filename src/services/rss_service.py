@@ -1,8 +1,9 @@
 """
-RSS获取模块
+RSS获取和管理模块
 """
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -12,6 +13,7 @@ import requests
 
 from ..core.config import Config
 from ..core.utils import setup_logger
+from .image_service import ImageDownloader
 
 logger = setup_logger(__name__)
 
@@ -30,6 +32,11 @@ class RSSItem:
         self.sent_time: Optional[datetime] = None  # 发送时间
         self.quality_score: Optional[int] = None  # AI质量评分（0-10分）
         self.scored_time: Optional[datetime] = None  # 评分时间
+        
+        # 图片相关属性
+        self.image_url: Optional[str] = None  # 原始图片URL
+        self.local_image_path: Optional[str] = None  # 本地图片路径
+        self.image_downloaded: bool = False  # 图片是否已下载
 
     def _generate_title_hash(self, title: str) -> str:
         """生成标题的唯一标识符"""
@@ -47,6 +54,21 @@ class RSSItem:
         self.quality_score = max(0, min(10, score))  # 确保分数在0-10范围内
         self.scored_time = datetime.now()
 
+    def set_image_info(self, image_url: str, local_path: str = None) -> None:
+        """设置图片信息"""
+        self.image_url = image_url
+        if local_path:
+            self.local_image_path = local_path
+            self.image_downloaded = True
+
+    def has_image(self) -> bool:
+        """检查是否有图片"""
+        return self.image_url is not None
+
+    def has_local_image(self) -> bool:
+        """检查是否有本地图片"""
+        return self.local_image_path is not None and self.image_downloaded
+
     def __str__(self):
         return f"{self.title} - {self.link}"
 
@@ -63,6 +85,9 @@ class RSSItem:
             "sent_time": self.sent_time.isoformat() if self.sent_time else None,
             "quality_score": self.quality_score,
             "scored_time": self.scored_time.isoformat() if self.scored_time else None,
+            "image_url": self.image_url,
+            "local_image_path": self.local_image_path,
+            "image_downloaded": self.image_downloaded,
         }
 
     @classmethod
@@ -80,6 +105,11 @@ class RSSItem:
         item.quality_score = data.get("quality_score")
         if data.get("scored_time"):
             item.scored_time = datetime.fromisoformat(data["scored_time"])
+        
+        # 恢复图片信息
+        item.image_url = data.get("image_url")
+        item.local_image_path = data.get("local_image_path")
+        item.image_downloaded = data.get("image_downloaded", False)
         return item
 
 
@@ -234,6 +264,7 @@ class RSSFetcher:
         self.feed_url = feed_url or Config.RSS_FEED_URL
         self.last_check_time: Optional[datetime] = None
         self.cache = RSSCache()
+        self.image_downloader = ImageDownloader()  # 初始化图片下载器
 
     def fetch_latest_items(
         self, since_minutes: int = None, enable_dedup: bool = True
@@ -298,6 +329,9 @@ class RSSFetcher:
                             description=entry.get("description", ""),
                             published=published,
                         )
+
+                        # 尝试获取和下载图片
+                        self._process_item_image(item, entry)
 
                         # 检查是否重复
                         if enable_dedup and self.cache.is_duplicate(item):
@@ -380,3 +414,51 @@ class RSSFetcher:
             for cache_file in self.cache.cache_dir.glob("rss_*.json"):
                 cache_file.unlink()
             logger.info("清理所有缓存")
+    
+    def _process_item_image(self, item: RSSItem, entry) -> None:
+        """
+        处理文章图片
+        
+        Args:
+            item: RSS条目
+            entry: feedparser条目对象
+        """
+        try:
+            # 提取图片URL
+            image_url = self.image_downloader.extract_image_from_rss_entry(entry)
+            
+            if image_url:
+                logger.info(f"发现文章图片: {item.title[:30]}... -> {image_url}")
+                
+                # 设置图片URL
+                item.set_image_info(image_url)
+                
+                # 下载图片
+                local_path = self.image_downloader.download_image(
+                    image_url, 
+                    filename=f"{item.title_hash}_{os.path.basename(image_url.split('?')[0])}"
+                )
+                
+                if local_path:
+                    # 更新本地路径
+                    item.set_image_info(image_url, local_path)
+                    logger.info(f"文章图片下载成功: {local_path}")
+                else:
+                    logger.warning(f"文章图片下载失败: {image_url}")
+            else:
+                logger.debug(f"文章无图片: {item.title[:30]}...")
+                
+        except Exception as e:
+            logger.error(f"处理文章图片失败 {item.title[:30]}...: {e}")
+    
+    def cleanup_old_images(self, days: int = 30) -> int:
+        """
+        清理旧图片
+        
+        Args:
+            days: 保留天数
+            
+        Returns:
+            删除的文件数量
+        """
+        return self.image_downloader.cleanup_old_images(days)

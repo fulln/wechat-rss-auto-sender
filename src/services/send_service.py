@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from ..core.config import Config
 from ..core.utils import setup_logger
-from ..integrations.wechat_client import WeChatSender
+from ..integrations.send_service_manager import SendServiceManager
 from .ai_service import Summarizer
 from .rss_service import RSSFetcher, RSSItem
 
@@ -20,8 +20,15 @@ class SendManager:
     def __init__(self):
         self.rss_fetcher = RSSFetcher()
         self.summarizer = Summarizer()
-        self.wechat_sender = WeChatSender()
+        self.send_service_manager = SendServiceManager()
         self.last_send_time: Optional[datetime] = None
+
+        # 检查是否有启用的发送器
+        if not self.send_service_manager.has_enabled_senders():
+            logger.warning("没有启用的发送器，请检查配置")
+        else:
+            enabled_senders = self.send_service_manager.get_enabled_senders()
+            logger.info(f"已启用的发送器: {', '.join(enabled_senders)}")
 
     def is_send_time_allowed(self) -> bool:
         """检查当前时间是否允许发送（晚上12点到早上9点不发送）"""
@@ -177,8 +184,11 @@ class SendManager:
                 logger.warning(f"文章AI总结失败，跳过发送: {article.title}")
                 return False
 
-            # 发送微信消息
-            success = self.wechat_sender.send_message(summary)
+            # 发送到所有启用的发送器
+            send_results = self.send_service_manager.send_message(summary)
+            
+            # 检查是否至少有一个发送器发送成功
+            success = any(send_results.values()) if send_results else False
 
             if success:
                 # 标记文章为已发送
@@ -253,8 +263,11 @@ class SendManager:
                 logger.warning("AI总结失败，跳过发送")
                 return False
 
-            # 发送微信消息
-            success = self.wechat_sender.send_message(summary)
+            # 发送到所有启用的发送器
+            send_results = self.send_service_manager.send_message(summary)
+            
+            # 检查是否至少有一个发送器发送成功
+            success = any(send_results.values()) if send_results else False
 
             if success:
                 # 标记文章为已发送

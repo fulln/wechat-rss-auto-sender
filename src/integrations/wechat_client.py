@@ -2,23 +2,26 @@
 微信发送模块
 """
 import time
+from typing import Dict, Any
 
 try:
     import wxauto
 except ImportError:
     wxauto = None
 
+from .base_sender import BaseSender
 from ..core.config import Config
 from ..core.utils import setup_logger
 
 logger = setup_logger(__name__)
 
 
-class WeChatSender:
+class WeChatSender(BaseSender):
     """微信消息发送器"""
 
-    def __init__(self, contact_name: str = None):
-        self.contact_name = contact_name or Config.WECHAT_CONTACT_NAME
+    def __init__(self, config: Dict[str, Any] = None):
+        super().__init__(config)
+        self.contact_name = self.config.get('contact_name') or Config.WECHAT_CONTACT_NAME
         self._wx_instance = None
 
     def _get_wechat_instance(self):
@@ -136,3 +139,26 @@ class WeChatSender:
         except Exception as e:
             logger.error(f"微信连接测试失败: {e}")
             return False
+
+    def get_sender_info(self) -> Dict[str, Any]:
+        """获取发送器信息"""
+        return {
+            'name': 'WeChat',
+            'type': 'instant_message',
+            'enabled': self.is_enabled(),
+            'contact_name': self.contact_name,
+            'has_wxauto': wxauto is not None,
+            'description': '微信即时消息发送'
+        }
+    
+    def validate_config(self) -> bool:
+        """验证配置"""
+        if not self.contact_name:
+            logger.error("微信联系人名称未配置")
+            return False
+        
+        if wxauto is None:
+            logger.error("wxauto模块未安装，请运行: pip install wxauto")
+            return False
+            
+        return True
