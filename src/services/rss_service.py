@@ -242,7 +242,7 @@ class RSSFetcher:
         获取最新的RSS条目
 
         Args:
-            since_minutes: 获取多少分钟内的文章，默认为配置的检查间隔
+            since_minutes: 获取多少分钟内的文章，默认使用配置的文章获取时间范围
             enable_dedup: 是否启用去重功能
 
         Returns:
@@ -251,8 +251,20 @@ class RSSFetcher:
         try:
             logger.info(f"开始获取RSS数据: {self.feed_url}")
 
+            # 获取代理配置
+            proxies = Config.get_proxies()
+            if proxies:
+                logger.info(f"使用代理: {proxies}")
+
             # 获取RSS数据
-            response = requests.get(self.feed_url, timeout=30)
+            response = requests.get(
+                self.feed_url, 
+                timeout=30,
+                proxies=proxies,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            )
             response.raise_for_status()
 
             # 解析RSS
@@ -261,9 +273,9 @@ class RSSFetcher:
             if feed.bozo:
                 logger.warning(f"RSS解析警告: {feed.bozo_exception}")
 
-            # 计算时间范围
-            since_minutes = since_minutes or Config.CHECK_INTERVAL_MINUTES
-            cutoff_time = datetime.now() - timedelta(minutes=since_minutes)
+            cutoff_time = datetime.now() - timedelta(minutes=Config.FETCH_ARTICLES_HOURS * 60)
+
+            logger.info(f"获取最近 {Config.FETCH_ARTICLES_HOURS} 小时内的文章")
 
             items = []
             duplicate_count = 0

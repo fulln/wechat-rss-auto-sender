@@ -1,6 +1,6 @@
 feedparser==6.0.10
 requests==2.31.0
-wxauto==3.9.8.17
+wxauto==39.1.15
 python-dotenv==1.0.0
 schedule==1.2.0
 openai==1.3.0

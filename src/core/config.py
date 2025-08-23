@@ -18,7 +18,13 @@ class Config:
 
     # RSS配置
     RSS_FEED_URL: str = os.getenv("RSS_FEED_URL", "https://36kr.com/feed")
-    CHECK_INTERVAL_MINUTES: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "5"))
+    CHECK_INTERVAL_MINUTES: int = int(os.getenv("CHECK_INTERVAL_MINUTES", "30"))  # RSS检查间隔
+    FETCH_ARTICLES_HOURS: int = int(os.getenv("FETCH_ARTICLES_HOURS", "6"))  # 文章获取时间范围（小时）
+    
+    # 代理配置
+    HTTP_PROXY: Optional[str] = os.getenv("HTTP_PROXY")
+    HTTPS_PROXY: Optional[str] = os.getenv("HTTPS_PROXY")
+    PROXY_URL: Optional[str] = os.getenv("PROXY_URL")  # 统一代理地址，格式如: http://localhost:7897
 
     # AI总结配置
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
@@ -56,3 +62,24 @@ class Config:
         if not cls.OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY is required")
         return True
+
+    @classmethod
+    def get_proxies(cls) -> Optional[dict]:
+        """获取代理配置"""
+        proxies = None
+        
+        # 优先使用统一代理地址
+        if cls.PROXY_URL:
+            proxies = {
+                'http': cls.PROXY_URL,
+                'https': cls.PROXY_URL
+            }
+        # 其次使用分别配置的代理
+        elif cls.HTTP_PROXY or cls.HTTPS_PROXY:
+            proxies = {}
+            if cls.HTTP_PROXY:
+                proxies['http'] = cls.HTTP_PROXY
+            if cls.HTTPS_PROXY:
+                proxies['https'] = cls.HTTPS_PROXY
+        
+        return proxies

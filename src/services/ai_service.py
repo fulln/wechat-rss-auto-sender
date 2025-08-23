@@ -22,9 +22,18 @@ class Summarizer:
         if not Config.OPENAI_API_KEY:
             raise ValueError("需要配置OPENAI_API_KEY")
 
-        self.client = OpenAI(
-            api_key=Config.OPENAI_API_KEY, base_url=Config.OPENAI_BASE_URL
-        )
+        # 获取代理配置
+        proxies = Config.get_proxies() if hasattr(Config, 'get_proxies') else None
+        client_kwargs = {
+            "api_key": Config.OPENAI_API_KEY,
+            "base_url": Config.OPENAI_BASE_URL
+        }
+        if proxies:
+            import httpx
+            client_kwargs["http_client"] = httpx.Client(proxies=proxies)
+            logger.info(f"Summarizer使用代理: {proxies}")
+        self.client = OpenAI(**client_kwargs)
+
 
     def clean_html(self, text: str) -> str:
         """清理HTML标签"""

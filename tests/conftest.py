@@ -20,7 +20,7 @@ def mock_env_vars(monkeypatch):
     """模拟环境变量的fixture"""
     test_vars = {
         "OPENAI_API_KEY": "test-api-key",
-        "WECHAT_CONTACT_NAME": "测试联系�?,
+        "WECHAT_CONTACT_NAME": "测试联系人",
         "RSS_FEED_URL": "https://test.example.com/feed",
         "CHECK_INTERVAL_MINUTES": "10",
         "LOG_LEVEL": "DEBUG",
