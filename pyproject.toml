@@ -13,7 +13,7 @@ requires-python = ">=3.8"
 dependencies = [
     "feedparser>=6.0.10",
     "requests>=2.31.0",
-    "wxauto>=3.9.8.17",
+    # "wxauto>=3.9.8.17",  # Windows only - use requirements-windows.txt for Windows deployment
     "python-dotenv>=1.0.0",
     "schedule>=1.2.0",
     "openai>=1.3.0",

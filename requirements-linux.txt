@@ -1,6 +1,8 @@
+# Linux版本依赖文件
+# 适用于Linux服务器部署
+
 feedparser==6.0.10
 requests==2.31.0
-# wxauto==39.1.15  # Windows only - not compatible with Linux
 python-dotenv==1.0.0
 schedule==1.2.0
 openai>=1.12.0
