@@ -29,6 +29,7 @@ class WeChatOfficialSender(BaseSender):
         self.custom_css = self.config.get('custom_css', '')
         self.footer_text = self.config.get('footer_text', '📱 更多科技资讯，请关注我们')
         self.author_name = self.config.get('author_name', 'RSS助手')
+        self.default_thumb_media_id = self.config.get('default_thumb_media_id')  # 预配置的默认封面media_id
         
     def send_message(self, message: str, **kwargs) -> bool:
         """
@@ -52,7 +53,20 @@ class WeChatOfficialSender(BaseSender):
                 return False
             
             article_type = kwargs.get('type', 'draft')  # draft 或 publish
-            title = kwargs.get('title', self._extract_title(message))
+            # 优先使用传入的标题，如果没有则从消息中提取
+            provided_title = kwargs.get('title')
+            if provided_title:
+                # 如果提供了原始标题，但可能是英文，先尝试从消息中提取优化后的中文标题
+                extracted_title = self._extract_title(message)
+                # 如果提取到的标题看起来是优化过的（不是默认标题），使用提取的标题
+                if extracted_title and extracted_title != "科技资讯分享" and len(extracted_title) > 5:
+                    title = extracted_title
+                else:
+                    # 否则使用提供的原始标题
+                    title = provided_title
+            else:
+                # 没有提供标题，从消息中提取
+                title = self._extract_title(message)
             rss_item = kwargs.get('rss_item')  # RSS条目对象，包含图片信息
             content = self._format_content(message, rss_item=rss_item)
             
@@ -102,31 +116,52 @@ class WeChatOfficialSender(BaseSender):
         Returns:
             access_token或None
         """
-        try:
-            url = "https://api.weixin.qq.com/cgi-bin/token"
-            params = {
-                'grant_type': 'client_credential',
-                'appid': self.app_id,
-                'secret': self.app_secret
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            data = response.json()
-            
-            if 'access_token' in data:
-                self.access_token = data['access_token']
-                # 提前5分钟过期，确保安全边际
-                current_time = time.time()
-                self.token_expires_at = current_time + data.get('expires_in', 7200) - 300
-                logger.info("微信公众号access_token获取成功")
-                return self.access_token
-            else:
-                logger.error(f"获取access_token失败: {data}")
-                return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                url = "https://api.weixin.qq.com/cgi-bin/token"
+                params = {
+                    'grant_type': 'client_credential',
+                    'appid': self.app_id,
+                    'secret': self.app_secret
+                }
                 
-        except Exception as e:
-            logger.error(f"获取access_token异常: {e}")
-            return None
+                response = requests.get(
+                    url, 
+                    params=params, 
+                    timeout=(5, 30),  # 连接超时5秒，读取超时30秒
+                    verify=True,
+                    allow_redirects=True
+                )
+                data = response.json()
+                
+                if 'access_token' in data:
+                    self.access_token = data['access_token']
+                    # 提前5分钟过期，确保安全边际
+                    current_time = time.time()
+                    self.token_expires_at = current_time + data.get('expires_in', 7200) - 300
+                    logger.info(f"微信公众号access_token获取成功 (尝试 {attempt + 1}/{max_retries})")
+                    return self.access_token
+                else:
+                    logger.warning(f"获取access_token失败: {data} (尝试 {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                        continue
+                    return None
+                    
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                logger.warning(f"获取access_token网络错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    continue
+                else:
+                    logger.error("所有重试都失败了，无法获取access_token")
+                    return None
+            except Exception as e:
+                logger.error(f"获取access_token异常: {e}")
+                return None
+        
+        return None
     
     def _upload_permanent_media(self, image_path: str, media_type: str = "image") -> Optional[str]:
         """
@@ -160,24 +195,48 @@ class WeChatOfficialSender(BaseSender):
                 logger.error(f"文件过大 ({file_size} bytes)，超过{media_type}类型限制 ({max_size} bytes)")
                 return None
             
-            with open(image_path, 'rb') as f:
-                files = {'media': f}
-                # 对于永久素材，需要添加description参数
-                data = {
-                    'description': '{"title":"RSS文章配图","introduction":"自动上传的RSS文章配图"}'
-                } if media_type == 'video' else {}
-                
-                response = requests.post(url, files=files, data=data, timeout=30)
-                result = response.json()
-                
-                if result.get('errcode') == 0 or 'media_id' in result:
-                    media_id = result['media_id']
-                    logger.info(f"永久素材上传成功: {media_id}")
-                    return media_id
-                else:
-                    logger.error(f"永久素材上传失败: {result}")
-                    return None
-                    
+            # 重试机制
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    with open(image_path, 'rb') as f:
+                        files = {'media': f}
+                        # 对于永久素材，需要添加description参数
+                        data = {
+                            'description': '{"title":"RSS文章配图","introduction":"自动上传的RSS文章配图"}'
+                        } if media_type == 'video' else {}
+                        
+                        # 增加SSL配置和超时设置
+                        response = requests.post(
+                            url, 
+                            files=files, 
+                            data=data, 
+                            timeout=(10, 60),  # 连接超时10秒，读取超时60秒
+                            verify=True,  # 启用SSL验证
+                            allow_redirects=True
+                        )
+                        result = response.json()
+                        
+                        if result.get('errcode') == 0 or 'media_id' in result:
+                            media_id = result['media_id']
+                            logger.info(f"永久素材上传成功: {media_id} (尝试 {attempt + 1}/{max_retries})")
+                            return media_id
+                        else:
+                            logger.warning(f"永久素材上传失败: {result} (尝试 {attempt + 1}/{max_retries})")
+                            if attempt < max_retries - 1:
+                                time.sleep(2)  # 重试前等待2秒
+                                continue
+                            return None
+                            
+                except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                    logger.warning(f"网络连接错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)  # 重试前等待3秒
+                        continue
+                    else:
+                        logger.error("所有重试都失败了，放弃上传")
+                        return None
+                        
         except Exception as e:
             logger.error(f"上传永久素材异常: {e}")
             return None
@@ -223,19 +282,28 @@ class WeChatOfficialSender(BaseSender):
             url = f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={self.access_token}"
             
             # 根据API要求，图文消息必须有thumb_media_id
-            # 如果没有提供，需要创建一个默认封面
+            # 如果没有提供，尝试使用配置的默认封面或上传新的默认封面
             if not thumb_media_id:
-                logger.info("没有提供封面图片，上传默认封面")
-                # 尝试使用默认封面图片
-                default_cover_path = os.path.join(os.path.dirname(__file__), '../../test_cover.jpg')
-                if os.path.exists(default_cover_path):
-                    thumb_media_id = self._upload_thumb_media(default_cover_path)
-                    if not thumb_media_id:
-                        logger.error("上传默认封面失败")
-                        return False
+                # 优先使用配置中的默认封面media_id
+                if self.default_thumb_media_id:
+                    thumb_media_id = self.default_thumb_media_id
+                    logger.info(f"使用配置的默认封面media_id: {thumb_media_id}")
                 else:
-                    logger.error("没有找到默认封面图片，草稿创建失败")
-                    return False
+                    logger.info("没有预配置的默认封面，尝试上传默认封面")
+                    # 尝试使用默认封面图片
+                    default_cover_path = os.path.join(os.path.dirname(__file__), '../../test_cover.jpg')
+                    if os.path.exists(default_cover_path):
+                        uploaded_media_id = self._upload_thumb_media(default_cover_path)
+                        if uploaded_media_id:
+                            thumb_media_id = uploaded_media_id
+                            logger.info(f"默认封面上传成功: {thumb_media_id}")
+                            logger.info(f"💡 建议将此media_id保存到配置中: WECHAT_OFFICIAL_DEFAULT_THUMB_MEDIA_ID={thumb_media_id}")
+                        else:
+                            logger.warning("上传默认封面失败，将创建纯文字草稿")
+                            # 继续尝试创建草稿，微信可能会使用默认封面
+                    else:
+                        logger.warning("没有找到默认封面图片，将创建纯文字草稿")
+                        # 继续创建草稿，不因为封面问题而失败
             
             # 构建文章数据
             # 确保标题长度符合微信要求（最多64个字符）
@@ -267,12 +335,19 @@ class WeChatOfficialSender(BaseSender):
                 "title": title,
                 "content": content,
                 "author": author,
-                "thumb_media_id": thumb_media_id,  # API要求必填
-                "show_cover_pic": 1,  # 显示封面
+                "show_cover_pic": 1 if thumb_media_id else 0,  # 有封面图片时显示
                 "need_open_comment": 1,  # 允许评论
                 "only_fans_can_comment": 0,  # 所有人可评论
                 "content_source_url": content_source_url,  # 原文链接
             }
+            
+            # 只有在有thumb_media_id时才添加该字段
+            if thumb_media_id:
+                article_data["thumb_media_id"] = thumb_media_id
+                logger.debug(f"使用封面图片: {thumb_media_id}")
+            else:
+                logger.debug("没有封面图片，创建纯文字草稿")
+            
             # 不添加digest字段，让微信自动生成摘要
             
             data = {
@@ -290,34 +365,55 @@ class WeChatOfficialSender(BaseSender):
             # 使用json.dumps确保中文不被转义
             json_data = json.dumps(data, ensure_ascii=False, indent=2)
             
-            response = requests.post(
-                url, 
-                data=json_data.encode('utf-8'), 
-                headers=headers, 
-                timeout=30
-            )
-            result = response.json()
-            
-            # 调试：记录完整响应
-            logger.debug(f"草稿创建API响应: {result}")
-            
-            # 检查是否有错误码
-            if 'errcode' in result and result['errcode'] != 0:
-                logger.error(f"草稿创建失败: {result}")
-                return False
-            
-            # 成功的响应包含media_id
-            if 'media_id' in result:
-                media_id = result.get('media_id')
-                logger.info(f"草稿创建成功，media_id: {media_id}")
-                
-                # 可以选择性地保存media_id用于后续发布
-                self._last_draft_media_id = media_id
-                
-                return True
-            else:
-                logger.error(f"草稿创建响应格式异常: {result}")
-                return False
+            # 重试机制
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        url, 
+                        data=json_data.encode('utf-8'), 
+                        headers=headers, 
+                        timeout=(10, 60),  # 连接超时10秒，读取超时60秒
+                        verify=True,
+                        allow_redirects=True
+                    )
+                    result = response.json()
+                    
+                    # 调试：记录完整响应
+                    logger.debug(f"草稿创建API响应: {result}")
+                    
+                    # 检查是否有错误码
+                    if 'errcode' in result and result['errcode'] != 0:
+                        logger.warning(f"草稿创建失败: {result} (尝试 {attempt + 1}/{max_retries})")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue
+                        return False
+                    
+                    # 成功的响应包含media_id
+                    if 'media_id' in result:
+                        media_id = result.get('media_id')
+                        logger.info(f"草稿创建成功，media_id: {media_id} (尝试 {attempt + 1}/{max_retries})")
+                        
+                        # 可以选择性地保存media_id用于后续发布
+                        self._last_draft_media_id = media_id
+                        
+                        return True
+                    else:
+                        logger.warning(f"草稿创建响应格式异常: {result} (尝试 {attempt + 1}/{max_retries})")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue
+                        return False
+                        
+                except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                    logger.warning(f"网络连接错误 (尝试 {attempt + 1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(3)
+                        continue
+                    else:
+                        logger.error("所有重试都失败了，放弃创建草稿")
+                        return False
                 
         except Exception as e:
             logger.error(f"创建草稿异常: {e}")
@@ -396,11 +492,45 @@ class WeChatOfficialSender(BaseSender):
     def _extract_title(self, message: str) -> str:
         """从消息中提取标题"""
         lines = message.strip().split('\n')
-        # 取第一行非空内容作为标题，并清理格式
+        
+        # 首先寻找明确标记的标题部分
         for line in lines:
-            clean_line = line.strip().replace('📰', '').replace('🔥', '').replace('#', '').strip()
+            line = line.strip()
+            if not line:
+                continue
+                
+            # 寻找 "📰 **优化标题**:" 或类似格式的标题
+            if ('📰' in line and ('优化标题' in line or '标题' in line)) or \
+               ('**' in line and ('标题' in line or '优化标题' in line)) or \
+               line.startswith('优化标题:'):
+                # 提取标题内容，去除标记符号
+                title_content = line
+                # 按顺序移除各种标记符号
+                markers_to_remove = [
+                    '📰', '**优化标题**:', '**标题**:', '优化标题:', '标题:', 
+                    '**', '*', '###', '##', '#', '🔥', '🎯', '📊'
+                ]
+                for marker in markers_to_remove:
+                    title_content = title_content.replace(marker, '')
+                
+                title_content = title_content.strip()
+                if title_content and len(title_content) > 5:
+                    logger.info(f"提取到标记标题: {title_content[:64]}")
+                    return title_content[:64]  # 微信公众号标题长度限制
+        
+        # 如果没找到明确标记的标题，查找第一行有效内容
+        for line in lines:
+            clean_line = line.strip()
+            # 移除常见的前缀符号
+            for prefix in ['📰', '🔥', '🎯', '�', '#', '*', '**']:
+                clean_line = clean_line.replace(prefix, '')
+            clean_line = clean_line.strip()
+            
+            # 跳过空行和过短的行
             if clean_line and len(clean_line) > 5:
+                logger.info(f"提取到首行标题: {clean_line[:64]}")
                 return clean_line[:64]  # 微信公众号标题长度限制
+                
         return "科技资讯分享"
     
     def _format_content(self, message: str, rss_item = None) -> str:

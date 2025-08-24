@@ -115,29 +115,34 @@ class SendManager:
 
     def select_articles_to_send(self, max_count: int = None) -> List[RSSItem]:
         """选择要发送的文章（添加质量评分筛选，只发送高质量文章）"""
+        logger.info("🔍 开始选择文章发送...")
+        
         # 获取未发送的文章
         unsent_items = self.multi_rss_manager.cache.get_unsent_items()
 
         if not unsent_items:
-            logger.info("没有待发送的文章")
+            logger.warning("⚠️ 没有待发送的文章")
             return []
 
+        logger.info(f"📝 获取到 {len(unsent_items)} 篇待评分文章")
+        
         # 对文章进行质量评分筛选
-        logger.info(f"开始对 {len(unsent_items)} 篇文章进行质量评分...")
+        logger.info(f"🎯 开始对 {len(unsent_items)} 篇文章进行质量评分...")
         qualified_articles = []
 
         for article in unsent_items:
             try:
                 # 检查是否已有评分，避免重复评分
                 if article.quality_score is None:
-                    logger.info(f"为文章评分: {article.title[:50]}...")
+                    logger.info(f"📊 为文章评分: {article.title[:50]}...")
                     score = self.summarizer.score_article(article)
                     article.set_quality_score(score)
                     # 更新缓存中的评分信息
                     self.multi_rss_manager.cache.update_item_sent_status(article)
+                    logger.info(f"📈 评分完成: {article.title[:30]}... -> {score}/10")
                 else:
                     score = article.quality_score
-                    logger.info(f"使用已有评分: {article.title[:50]}... (评分: {score}/10)")
+                    logger.info(f"📋 使用已有评分: {article.title[:50]}... (评分: {score}/10)")
 
                 # 只选择评分达到要求的文章
                 if score >= Config.MIN_QUALITY_SCORE:
@@ -149,11 +154,11 @@ class SendManager:
                     )
 
             except Exception as e:
-                logger.error(f"文章评分失败: {article.title[:50]}... - {e}")
+                logger.error(f"💥 文章评分失败: {article.title[:50]}... - {e}")
                 continue
 
         if not qualified_articles:
-            logger.info(f"没有文章达到最低质量要求（{Config.MIN_QUALITY_SCORE}/10分）")
+            logger.warning(f"⚠️ 没有文章达到最低质量要求（{Config.MIN_QUALITY_SCORE}/10分）")
             return []
 
         # 按评分排序，选择质量最高的文章
@@ -163,8 +168,8 @@ class SendManager:
         best_article, best_score = qualified_articles[0]
         selected = [best_article]
 
-        logger.info(f"选择最高质量文章准备发送: {best_article.title[:50]}... (评分: {best_score}/10)")
-        logger.info(f"质量合格文章总数: {len(qualified_articles)}, 待检查总数: {len(unsent_items)}")
+        logger.info(f"🎖️ 选择最高质量文章准备发送: {best_article.title[:50]}... (评分: {best_score}/10)")
+        logger.info(f"📊 质量合格文章总数: {len(qualified_articles)}, 待检查总数: {len(unsent_items)}")
         return selected
 
     def send_single_article(self, article: RSSItem) -> bool:
@@ -182,18 +187,52 @@ class SendManager:
             article.mark_send_attempt()
             self.multi_rss_manager.cache.update_item_sent_status(article)
             
-            # 使用新的单篇文章专门总结功能
-            summary = self.summarizer.summarize_single_item(article)
-
-            if not summary:
-                error_msg = "AI总结失败"
+            # 获取已启用的发送器
+            enabled_senders = self.send_service_manager.get_enabled_senders()
+            if not enabled_senders:
+                error_msg = "没有启用的发送器"
                 article.mark_send_failed(error_msg)
                 self.multi_rss_manager.cache.update_item_sent_status(article)
-                logger.warning(f"文章AI总结失败，跳过发送: {article.title}")
+                logger.warning(f"没有启用的发送器，跳过发送: {article.title}")
                 return False
-
-            # 发送到所有启用的发送器
-            send_results = self.send_service_manager.send_message(summary)
+            
+            # 为每个发送器生成对应的内容并发送
+            send_results = {}
+            
+            for sender_name in enabled_senders:
+                try:
+                    # 根据发送器类型选择相应的sender_type
+                    if sender_name == "wechat_official":
+                        sender_type = "wechat_official"
+                    elif sender_name == "xiaohongshu":
+                        sender_type = "xiaohongshu"
+                    else:  # wechat 或其他
+                        sender_type = "wechat"
+                    
+                    logger.info(f"为发送器 {sender_name} 生成内容 (类型: {sender_type})")
+                    
+                    # 为该发送器生成专门的内容
+                    summary = self.summarizer.summarize_single_item(article, sender_type)
+                    
+                    if not summary:
+                        logger.warning(f"发送器 {sender_name} 的AI总结失败")
+                        send_results[sender_name] = False
+                        continue
+                    
+                    # 发送到该发送器
+                    result = self.send_service_manager.send_to_specific(
+                        sender_name, summary, title=article.title, rss_item=article
+                    )
+                    send_results[sender_name] = result
+                    
+                    if result:
+                        logger.info(f"文章成功发送到 {sender_name}: {article.title[:30]}...")
+                    else:
+                        logger.warning(f"文章发送失败到 {sender_name}: {article.title[:30]}...")
+                        
+                except Exception as e:
+                    logger.error(f"发送器 {sender_name} 处理失败: {e}")
+                    send_results[sender_name] = False
             
             # 检查是否至少有一个发送器发送成功
             success = any(send_results.values()) if send_results else False
@@ -278,19 +317,51 @@ class SendManager:
                 article.mark_send_attempt()
                 self.multi_rss_manager.cache.update_item_sent_status(article)
             
-            # 使用多篇文章总结
-            summary = self.summarizer.summarize_items(articles)
-
-            if not summary:
-                error_msg = "批量AI总结失败"
+            # 获取已启用的发送器
+            enabled_senders = self.send_service_manager.get_enabled_senders()
+            if not enabled_senders:
+                error_msg = "没有启用的发送器"
                 for article in articles:
                     article.mark_send_failed(error_msg)
                     self.multi_rss_manager.cache.update_item_sent_status(article)
-                logger.warning("AI总结失败，跳过发送")
+                logger.warning("没有启用的发送器，跳过发送")
                 return False
-
-            # 发送到所有启用的发送器
-            send_results = self.send_service_manager.send_message(summary)
+            
+            # 为每个发送器生成对应的内容并发送
+            send_results = {}
+            
+            for sender_name in enabled_senders:
+                try:
+                    # 根据发送器类型选择相应的sender_type
+                    if sender_name == "wechat_official":
+                        sender_type = "wechat_official"
+                    elif sender_name == "xiaohongshu":
+                        sender_type = "xiaohongshu"
+                    else:  # wechat 或其他
+                        sender_type = "wechat"
+                    
+                    logger.info(f"为发送器 {sender_name} 生成批量内容 (类型: {sender_type})")
+                    
+                    # 为该发送器生成专门的内容
+                    summary = self.summarizer.summarize_items(articles, sender_type)
+                    
+                    if not summary:
+                        logger.warning(f"发送器 {sender_name} 的批量AI总结失败")
+                        send_results[sender_name] = False
+                        continue
+                    
+                    # 发送到该发送器
+                    result = self.send_service_manager.send_to_specific(sender_name, summary)
+                    send_results[sender_name] = result
+                    
+                    if result:
+                        logger.info(f"批量文章成功发送到 {sender_name}")
+                    else:
+                        logger.warning(f"批量文章发送失败到 {sender_name}")
+                        
+                except Exception as e:
+                    logger.error(f"发送器 {sender_name} 批量处理失败: {e}")
+                    send_results[sender_name] = False
             
             # 检查是否至少有一个发送器发送成功
             success = any(send_results.values()) if send_results else False

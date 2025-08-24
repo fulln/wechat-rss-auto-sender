@@ -49,23 +49,30 @@ class NewsScheduler:
     def process_send_queue(self):
         """处理发送队列"""
         try:
-            logger.info("检查发送队列...")
+            logger.info("🔄 开始检查发送队列...")
+            
+            # 添加调试信息：检查当前缓存状态
+            unsent_count = len(self.send_manager.multi_rss_manager.cache.get_unsent_items())
+            logger.info(f"📊 当前缓存中未发送文章数: {unsent_count}")
+            
             sent_count = self.send_manager.process_pending_articles()
 
             if sent_count > 0:
-                logger.info(f"成功发送 {sent_count} 篇文章")
+                logger.info(f"✅ 成功发送 {sent_count} 篇文章")
+            else:
+                logger.info("📭 本轮未发送任何文章")
 
             # 显示发送状态
             status = self.send_manager.get_send_status()
             if status["unsent_articles_count"] > 0:
-                logger.info(f"待发送文章数: {status['unsent_articles_count']}")
+                logger.info(f"📝 待发送文章数: {status['unsent_articles_count']}")
                 if not status["can_send_now"] and status["next_send_time"]:
-                    logger.info(f"下次发送时间: {status['next_send_time']}")
+                    logger.info(f"⏰ 下次发送时间: {status['next_send_time']}")
 
             return sent_count
 
         except Exception as e:
-            logger.error(f"处理发送队列时发生错误: {e}")
+            logger.error(f"💥 处理发送队列时发生错误: {e}")
             return 0
 
     def run_cycle(self):

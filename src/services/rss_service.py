@@ -33,6 +33,10 @@ class RSSItem:
         self.quality_score: Optional[int] = None  # AI质量评分（0-10分）
         self.scored_time: Optional[datetime] = None  # 评分时间
         
+        # 质量控制状态 - 简化设计，主要基于quality_score
+        self.excluded_from_sending: bool = False  # 是否被排除出发送队列
+        self.exclusion_reason: Optional[str] = None  # 排除原因
+        
         # 发送状态详细记录
         self.send_attempts: int = 0  # 发送尝试次数
         self.last_attempt_time: Optional[datetime] = None  # 最后尝试时间
@@ -91,6 +95,76 @@ class RSSItem:
         """设置质量评分"""
         self.quality_score = max(0, min(10, score))  # 确保分数在0-10范围内
         self.scored_time = datetime.now()
+        
+        logger.debug(f"🎯 文章评分设置: {self.title[:30]}... -> {self.quality_score}/10")
+        
+        # 检查是否通过质量要求，如果不通过则自动排除
+        from ..core.config import Config
+        min_score = getattr(Config, 'MIN_QUALITY_SCORE', 7)
+        if self.quality_score < min_score:
+            reason = f"质量评分 {self.quality_score} 低于要求 {min_score}"
+            logger.warning(f"🚫 文章被自动排除: {self.title[:30]}... 原因: {reason}")
+            self.exclude_from_sending(reason)
+        else:
+            logger.debug(f"✅ 文章通过质量检查: {self.title[:30]}... 分数: {self.quality_score}/{min_score}")
+
+    def exclude_from_sending(self, reason: str) -> None:
+        """将文章排除出发送队列"""
+        self.excluded_from_sending = True
+        self.exclusion_reason = reason
+        logger.info(f"❌ 文章已排除出发送队列: {self.title[:50]}... 原因: {reason}")
+
+    def is_sendable(self) -> bool:
+        """检查文章是否可以发送"""
+        # 已发送或发送成功的不再发送
+        if self.sent_status or self.send_success:
+            logger.debug(f"文章已发送: {self.title[:30]}... sent_status={self.sent_status}, send_success={self.send_success}")
+            return False
+            
+        # 被手动排除出发送队列的不发送
+        if self.excluded_from_sending:
+            logger.debug(f"文章被排除: {self.title[:30]}... 原因: {self.exclusion_reason}")
+            return False
+            
+        # 如果已评分且分数不达标，不发送
+        if self.has_quality_score() and not self.meets_quality_requirement():
+            logger.info(f"❌ 文章质量不达标已排除: {self.title[:30]}... 分数: {self.quality_score} (需要≥{Config.MIN_QUALITY_SCORE})")
+            return False
+            
+        # 检查重试逻辑
+        if not self.should_retry_send():
+            logger.debug(f"文章重试限制: {self.title[:30]}... 尝试次数: {self.send_attempts}, 上次尝试: {self.last_attempt_time}")
+            return False
+            
+        logger.debug(f"文章可发送: {self.title[:30]}... 质量分: {self.quality_score}")
+        return True
+
+    def has_quality_score(self) -> bool:
+        """检查是否已有质量评分"""
+        return self.quality_score is not None and self.scored_time is not None
+
+    def meets_quality_requirement(self) -> bool:
+        """检查是否满足质量要求"""
+        if not self.has_quality_score():
+            return True  # 未评分的文章默认认为可发送，等待评分
+            
+        from ..core.config import Config
+        min_score = getattr(Config, 'MIN_QUALITY_SCORE', 7)
+        return self.quality_score >= min_score
+
+    def needs_quality_check(self) -> bool:
+        """检查是否需要进行质量检查"""
+        from ..core.config import Config
+        
+        # 如果禁用了质量检查，不需要检查
+        if not getattr(Config, 'ENABLE_QUALITY_CHECK', True):
+            return False
+            
+        # 已经有评分的不需要再检查
+        if self.has_quality_score():
+            return False
+            
+        return True
 
     def set_image_info(self, image_url: str, local_path: str = None) -> None:
         """设置图片信息"""
@@ -123,7 +197,10 @@ class RSSItem:
             "sent_time": self.sent_time.isoformat() if self.sent_time else None,
             "quality_score": self.quality_score,
             "scored_time": self.scored_time.isoformat() if self.scored_time else None,
-            # 新增的发送状态字段
+            # 质量控制状态字段 - 简化
+            "excluded_from_sending": self.excluded_from_sending,
+            "exclusion_reason": self.exclusion_reason,
+            # 发送状态字段
             "send_attempts": self.send_attempts,
             "last_attempt_time": self.last_attempt_time.isoformat() if self.last_attempt_time else None,
             "send_error": self.send_error,
@@ -151,6 +228,10 @@ class RSSItem:
         item.quality_score = data.get("quality_score")
         if data.get("scored_time"):
             item.scored_time = datetime.fromisoformat(data["scored_time"])
+        
+        # 恢复质量控制状态 - 简化
+        item.excluded_from_sending = data.get("excluded_from_sending", False)
+        item.exclusion_reason = data.get("exclusion_reason")
         
         # 恢复发送状态信息
         item.send_attempts = data.get("send_attempts", 0)
@@ -273,25 +354,93 @@ class RSSCache:
             self._save_cache(item.date_key)
 
     def get_unsent_items(self, date_key: str = None) -> List[RSSItem]:
-        """获取未发送的文章"""
-        unsent_items = []
+        """获取未发送且可发送的文章"""
+        sendable_items = []
+        total_items = 0
+        debug_stats = {
+            'sent_status': 0,
+            'excluded': 0,
+            'quality_failed': 0,
+            'retry_failed': 0,
+            'sendable': 0
+        }
 
         if date_key:
-            # 获取指定日期的未发送文章
+            # 获取指定日期的可发送文章
             if date_key in self.article_details:
                 for item in self.article_details[date_key].values():
-                    if not item.sent_status and item.should_retry_send():
-                        unsent_items.append(item)
+                    total_items += 1
+                    if item.sent_status or item.send_success:
+                        debug_stats['sent_status'] += 1
+                    elif item.excluded_from_sending:
+                        debug_stats['excluded'] += 1
+                        logger.debug(f"文章被排除: {item.title[:30]}... 原因: {item.exclusion_reason}")
+                    elif item.has_quality_score() and not item.meets_quality_requirement():
+                        debug_stats['quality_failed'] += 1
+                        logger.info(f"❌ 文章质量不达标已排除: {item.title[:30]}... 分数: {item.quality_score} (需要≥{Config.MIN_QUALITY_SCORE})")
+                    elif not item.should_retry_send():
+                        debug_stats['retry_failed'] += 1
+                        logger.debug(f"文章重试次数过多: {item.title[:30]}... 尝试: {item.send_attempts}")
+                    else:
+                        debug_stats['sendable'] += 1
+                        sendable_items.append(item)
         else:
-            # 获取所有日期的未发送文章
+            # 获取所有日期的可发送文章
             for date_articles in self.article_details.values():
                 for item in date_articles.values():
-                    if not item.sent_status and item.should_retry_send():
-                        unsent_items.append(item)
+                    total_items += 1
+                    if item.sent_status or item.send_success:
+                        debug_stats['sent_status'] += 1
+                    elif item.excluded_from_sending:
+                        debug_stats['excluded'] += 1
+                        logger.debug(f"文章被排除: {item.title[:30]}... 原因: {item.exclusion_reason}")
+                    elif item.has_quality_score() and not item.meets_quality_requirement():
+                        debug_stats['quality_failed'] += 1
+                        logger.info(f"❌ 文章质量不达标已排除: {item.title[:30]}... 分数: {item.quality_score} (需要≥{Config.MIN_QUALITY_SCORE})")
+                    elif not item.should_retry_send():
+                        debug_stats['retry_failed'] += 1
+                        logger.debug(f"文章重试次数过多: {item.title[:30]}... 尝试: {item.send_attempts}")
+                    else:
+                        debug_stats['sendable'] += 1
+                        sendable_items.append(item)
+
+        logger.info(f"📊 文章状态统计 - 总计: {total_items}, 可发送: {debug_stats['sendable']}, "
+                   f"已发送: {debug_stats['sent_status']}, 被排除: {debug_stats['excluded']}, "
+                   f"质量不达标(已排除): {debug_stats['quality_failed']}, 重试失败: {debug_stats['retry_failed']}")
+
+        # 补充说明：质量不达标的文章会被自动排除出发送队列
+        if debug_stats['quality_failed'] > 0:
+            logger.info(f"ℹ️ 说明：{debug_stats['quality_failed']}篇质量不达标文章已被自动排除，不会进入发送队列")
 
         # 按发布时间排序（最新的在前）
-        unsent_items.sort(key=lambda x: x.published, reverse=True)
-        return unsent_items
+        sendable_items.sort(key=lambda x: x.published, reverse=True)
+        return sendable_items
+
+    def get_items_needing_quality_check(self) -> List[RSSItem]:
+        """获取需要质量检查的文章"""
+        items_to_check = []
+        
+        for date_articles in self.article_details.values():
+            for item in date_articles.values():
+                if item.needs_quality_check():
+                    items_to_check.append(item)
+        
+        # 按发布时间排序（最新的在前）
+        items_to_check.sort(key=lambda x: x.published, reverse=True)
+        return items_to_check
+
+    def get_excluded_items(self) -> List[RSSItem]:
+        """获取被排除出发送队列的文章"""
+        excluded_items = []
+        
+        for date_articles in self.article_details.values():
+            for item in date_articles.values():
+                if item.excluded_from_sending:
+                    excluded_items.append(item)
+        
+        # 按发布时间排序（最新的在前）
+        excluded_items.sort(key=lambda x: x.published, reverse=True)
+        return excluded_items
 
     def cleanup_old_cache(self, keep_days: int = 7):
         """清理旧的缓存文件"""

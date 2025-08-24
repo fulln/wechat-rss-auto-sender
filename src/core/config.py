@@ -80,6 +80,7 @@ class Config:
     WECHAT_OFFICIAL_USE_RICH_FORMATTING: bool = os.getenv("WECHAT_OFFICIAL_USE_RICH_FORMATTING", "true").lower() == "true"
     WECHAT_OFFICIAL_FOOTER_TEXT: str = os.getenv("WECHAT_OFFICIAL_FOOTER_TEXT", "📱 更多科技资讯，请关注我们")
     WECHAT_OFFICIAL_AUTHOR_NAME: str = os.getenv("WECHAT_OFFICIAL_AUTHOR_NAME", "RSS助手")
+    WECHAT_OFFICIAL_DEFAULT_THUMB_MEDIA_ID: Optional[str] = os.getenv("WECHAT_OFFICIAL_DEFAULT_THUMB_MEDIA_ID")  # 默认封面图片media_id
 
     @classmethod
     def validate(cls) -> bool:
@@ -142,7 +143,8 @@ class Config:
                 'app_secret': cls.WECHAT_OFFICIAL_APP_SECRET,
                 'use_rich_formatting': cls.WECHAT_OFFICIAL_USE_RICH_FORMATTING,
                 'footer_text': cls.WECHAT_OFFICIAL_FOOTER_TEXT,
-                'author_name': cls.WECHAT_OFFICIAL_AUTHOR_NAME
+                'author_name': cls.WECHAT_OFFICIAL_AUTHOR_NAME,
+                'default_thumb_media_id': cls.WECHAT_OFFICIAL_DEFAULT_THUMB_MEDIA_ID
             }
         }
     

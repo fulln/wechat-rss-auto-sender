@@ -93,7 +93,7 @@ class SenderManager:
     
     def __init__(self):
         self.senders: Dict[str, BaseSender] = {}
-        self.enabled_senders: List[BaseSender] = []
+        self.enabled_senders: List[str] = []  # 存储发送器的注册名称而不是实例
         
     def register_sender(self, sender_name: str, sender: BaseSender):
         """
@@ -106,7 +106,7 @@ class SenderManager:
         self.senders[sender_name] = sender
         
         if sender.setup() and sender.is_enabled():
-            self.enabled_senders.append(sender)
+            self.enabled_senders.append(sender_name)  # 存储注册名称
             logger.info(f"注册并启用发送器: {sender_name}")
         else:
             logger.info(f"注册发送器但未启用: {sender_name}")
@@ -128,19 +128,20 @@ class SenderManager:
             logger.warning("没有启用的发送器")
             return results
         
-        for sender in self.enabled_senders:
+        for sender_name in self.enabled_senders:
+            sender = self.senders[sender_name]
             try:
                 result = sender.send_message(message, **kwargs)
-                results[sender.name] = result
+                results[sender_name] = result
                 
                 if result:
-                    logger.info(f"{sender.name} 发送成功")
+                    logger.info(f"{sender_name} 发送成功")
                 else:
-                    logger.error(f"{sender.name} 发送失败")
+                    logger.error(f"{sender_name} 发送失败")
                     
             except Exception as e:
-                logger.error(f"{sender.name} 发送异常: {e}")
-                results[sender.name] = False
+                logger.error(f"{sender_name} 发送异常: {e}")
+                results[sender_name] = False
         
         return results
     
@@ -190,7 +191,7 @@ class SenderManager:
     
     def get_enabled_senders(self) -> List[str]:
         """获取已启用的发送器名称列表"""
-        return [sender.name for sender in self.enabled_senders]
+        return self.enabled_senders
     
     def get_sender_info(self) -> Dict[str, Dict[str, Any]]:
         """获取所有发送器信息"""

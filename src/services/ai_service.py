@@ -2,10 +2,14 @@
 AI总结模块
 """
 import re
-from typing import List
-
-from bs4 import BeautifulSoup
+import logging
+from typing import List, Optional
 from openai import OpenAI
+import time
+from bs4 import BeautifulSoup
+import subprocess
+import tempfile
+import os
 
 from ..core.config import Config
 from ..core.prompts import PromptTemplates
@@ -75,12 +79,202 @@ class Summarizer:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned
 
-    def summarize_single_item(self, item: RSSItem) -> str:
+    def clean_content_for_wechat(self, content: str) -> str:
+        """专门为微信公众号清理内容格式"""
+        if not content:
+            return ""
+        
+        # 1. 清理不需要的标题前缀（保留原始结构）
+        prefixes_to_remove = [
+            r'📰\s*\*\*优化标题\*\*:\s*',
+            r'优化标题:\s*',
+            r'📰\s*\*\*标题\*\*:\s*',
+            r'标题:\s*',
+        ]
+        
+        for prefix in prefixes_to_remove:
+            content = re.sub(prefix, '', content, flags=re.IGNORECASE)
+        
+        # 2. 适度清理空白字符，保留段落结构
+        content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)  # 多个连续空行合并为两个
+        content = re.sub(r'[ \t]+', ' ', content)  # 多个空格合并为一个
+        content = re.sub(r'^\s+', '', content, flags=re.MULTILINE)  # 去除行首空格
+        content = re.sub(r'\s+$', '', content, flags=re.MULTILINE)  # 去除行尾空格
+        
+        # 3. 清理HTML中的多余空格（如果已经是HTML）
+        if '<' in content and '>' in content:
+            content = re.sub(r'>\s+<', '><', content)  # 去除标签间空格
+            content = re.sub(r'<p>\s*</p>', '', content)  # 移除空段落
+            content = re.sub(r'<div>\s*</div>', '', content)  # 移除空div
+        
+        return content.strip()
+
+    def markdown_to_html(self, text: str) -> str:
+        """将Markdown格式转换为HTML格式，使用pandoc进行转换并清理空格"""
+        if not text:
+            return ""
+        
+        try:
+            # 先进行基本清理
+            text = self.clean_content_for_wechat(text)
+            
+            # 使用pandoc进行转换
+            try:
+                import pypandoc
+                # 将markdown转换为HTML
+                html_content = pypandoc.convert_text(
+                    text, 
+                    'html', 
+                    format='md',
+                    extra_args=[
+                        '--no-highlight',  # 禁用代码高亮
+                        '--wrap=none',     # 不自动换行
+                        '--email-obfuscation=none'  # 不混淆邮箱
+                    ]
+                )
+                
+                # 进一步清理HTML
+                html_content = self.clean_content_for_wechat(html_content)
+                
+                return html_content
+                
+            except ImportError:
+                logger.warning("pypandoc未安装，使用简单转换")
+                return self._simple_markdown_to_html(text)
+                
+        except Exception as e:
+            logger.error(f"Markdown转HTML失败: {e}")
+            return self._simple_markdown_to_html(text)
+    
+    def _simple_markdown_to_html(self, text: str) -> str:
+        """简单的Markdown到HTML转换（备用方案）"""
+        if not text:
+            return ""
+        
+        # 先进行基本清理
+        text = self.clean_content_for_wechat(text)
+        
+        # 转换标题（在转换其他内容之前）
+        text = re.sub(r'^### (.*?)$', r'<h3>\1</h3>', text, flags=re.MULTILINE)
+        text = re.sub(r'^## (.*?)$', r'<h2>\1</h2>', text, flags=re.MULTILINE)
+        text = re.sub(r'^# (.*?)$', r'<h1>\1</h1>', text, flags=re.MULTILINE)
+        
+        # 转换列表项（先收集所有列表项）
+        lines = text.split('\n')
+        processed_lines = []
+        in_list = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            # 检查是否是列表项
+            if re.match(r'^[-\*\+]\s+', line_stripped):
+                if not in_list:
+                    processed_lines.append('<ul>')
+                    in_list = True
+                # 转换列表项
+                list_content = re.sub(r'^[-\*\+]\s+', '', line_stripped)
+                processed_lines.append(f'<li>{list_content}</li>')
+            else:
+                if in_list:
+                    processed_lines.append('</ul>')
+                    in_list = False
+                processed_lines.append(line)
+        
+        # 如果文档结束时还在列表中，关闭列表
+        if in_list:
+            processed_lines.append('</ul>')
+        
+        text = '\n'.join(processed_lines)
+        
+        # 转换粗体和斜体
+        text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
+        text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)
+        
+        # 转换链接 [text](url) -> <a href="url">text</a>
+        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+        
+        # 处理段落（避免把已有的HTML标签包装在p标签中）
+        paragraphs = text.split('\n\n')
+        html_paragraphs = []
+        
+        for p in paragraphs:
+            p = p.strip()
+            if p:
+                # 检查是否已经是HTML标签（标题、列表等）
+                if re.match(r'<(h[1-6]|ul|ol|li)', p) or p.startswith('<'):
+                    html_paragraphs.append(p)
+                else:
+                    # 普通文本包装在p标签中
+                    html_paragraphs.append(f'<p>{p}</p>')
+        
+        result = '\n\n'.join(html_paragraphs)
+        
+        # 最后清理
+        return result
+
+    def _extract_article_metadata(self, content: str) -> tuple[str, dict]:
+        """从AI生成的内容中提取评分和标签等元数据"""
+        metadata = {}
+        
+        # 查找评分信息
+        score_pattern = r'📊\s*热度评分[：:]\s*(\d+(?:\.\d+)?)'
+        score_match = re.search(score_pattern, content)
+        if score_match:
+            metadata['score'] = float(score_match.group(1))
+        
+        # 查找目标受众
+        audience_pattern = r'🎯\s*目标受众[：:]\s*([^\n]+)'
+        audience_match = re.search(audience_pattern, content)
+        if audience_match:
+            metadata['audience'] = audience_match.group(1).strip()
+        
+        # 查找标签
+        tags_pattern = r'🏷️\s*文章标签[：:]\s*([^\n]+)'
+        tags_match = re.search(tags_pattern, content)
+        if tags_match:
+            tags_text = tags_match.group(1).strip()
+            # 提取所有标签，去除HTML标签
+            tags_text = re.sub(r'<[^>]+>', '', tags_text)  # 清理HTML标签
+            tag_matches = re.findall(r'#([^#\s<>]+)', tags_text)
+            metadata['tags'] = tag_matches
+        
+        # 移除元数据部分，只保留主要内容
+        # 查找元数据开始的位置（通常在最后）
+        metadata_start = content.find('📊 热度评分')
+        if metadata_start == -1:
+            metadata_start = content.find('**📊 热度评分')
+        
+        if metadata_start != -1:
+            clean_content = content[:metadata_start].strip()
+        else:
+            clean_content = content
+        
+        return clean_content, metadata
+
+    def get_article_engagement_score(self, content: str) -> float:
+        """获取文章的参与度评分"""
+        try:
+            _, metadata = self._extract_article_metadata(content)
+            return metadata.get('score', 5.0)  # 默认评分5.0
+        except:
+            return 5.0
+
+    def get_article_tags(self, content: str) -> list:
+        """获取文章标签"""
+        try:
+            _, metadata = self._extract_article_metadata(content)
+            return metadata.get('tags', [])
+        except:
+            return []
+
+    def summarize_single_item(self, item: RSSItem, sender_type: str = "wechat") -> str:
         """
         为单篇文章生成专门的AI总结
 
         Args:
             item: 单个RSS条目
+            sender_type: 发送源类型 ("wechat", "wechat_official", "xiaohongshu")
 
         Returns:
             针对该文章的专门总结内容
@@ -93,38 +287,70 @@ class Summarizer:
             clean_title = item.title.strip()
             clean_desc = self.clean_html(item.description)
 
-            # 使用新的提示词模板
-            prompt = PromptTemplates.get_single_article_prompt(
-                title=clean_title,
-                content=clean_desc[:500],  # 限制内容长度避免token超限
-                link=item.link,
-                min_length=Config.SUMMARY_MIN_LENGTH,
-                max_length=Config.SUMMARY_MAX_LENGTH,
-            )
+            # 根据发送源选择不同的提示词模板
+            if sender_type in ["wechat_official", "xiaohongshu"]:
+                # 公众号和小红书不限制字数
+                prompt = PromptTemplates.get_single_article_prompt(
+                    title=clean_title,
+                    content=clean_desc[:1000],  # 增加内容长度用于深度分析
+                    link=item.link,
+                    min_length=0,  # 不限制最小长度
+                    max_length=0,  # 不限制最大长度
+                    sender_type=sender_type,
+                )
+                max_tokens = 2000  # 增加token限制
+            else:
+                # 微信个人号保持原有限制
+                prompt = PromptTemplates.get_single_article_prompt(
+                    title=clean_title,
+                    content=clean_desc[:500],  # 限制内容长度避免token超限
+                    link=item.link,
+                    min_length=Config.SUMMARY_MIN_LENGTH,
+                    max_length=Config.SUMMARY_MAX_LENGTH,
+                    sender_type=sender_type,
+                )
+                max_tokens = 800
 
-            # 调用AI API，使用专门的系统角色
+            # 调用AI API，使用发送源对应的系统角色
             response = self.client.chat.completions.create(
                 model="deepseek-chat",  # 使用DeepSeek模型
                 messages=[
                     {
                         "role": "system",
                         "content": PromptTemplates.get_system_role(
-                            "content_strategist"
+                            "content_strategist", sender_type
                         ),
                     },
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=800,  # 增加token限制以支持更丰富的内容
+                max_tokens=max_tokens,
                 temperature=0.8,
             )
 
             summary = response.choices[0].message.content.strip()
 
-            # 确保包含原文链接
-            if "阅读原文" not in summary and item.link not in summary:
-                summary += f"\n\n📖 阅读原文：{item.link}"
+            # 解析和处理评分标签信息（仅对微信公众号）
+            if sender_type == "wechat_official":
+                summary, metadata = self._extract_article_metadata(summary)
+                
+                # 记录评分和标签信息
+                if metadata:
+                    logger.info(f"文章元数据 - 热度评分: {metadata.get('score', 'N/A')}, "
+                              f"目标受众: {metadata.get('audience', 'N/A')}, "
+                              f"标签: {metadata.get('tags', 'N/A')}")
+                
+                if "延伸阅读" not in summary and "原文链接" not in summary and item.link not in summary:
+                    summary += f"\n\n🔗 **延伸阅读**：[查看完整技术详情]({item.link})"
+                # 对微信公众号内容进行Markdown到HTML转换
+                summary = self.markdown_to_html(summary)
+            elif sender_type == "xiaohongshu":
+                if "了解更多" not in summary and "原文" not in summary and item.link not in summary:
+                    summary += f"\n\n📖 想了解更多技术细节？👆点击查看原文哦~\n{item.link}"
+            else:
+                if "阅读原文" not in summary and item.link not in summary:
+                    summary += f"\n\n📖 阅读原文：{item.link}"
 
-            logger.info(f"单篇文章AI总结完成 - 标题: {clean_title[:30]}..., 字数: {len(summary)}")
+            logger.info(f"单篇文章AI总结完成 ({sender_type}) - 标题: {clean_title[:30]}..., 字数: {len(summary)}")
             return summary
 
         except Exception as e:
@@ -132,13 +358,14 @@ class Summarizer:
             # 降级到简单总结
             return self._simple_single_summary(item)
 
-    def summarize_items(self, items: List[RSSItem]) -> str:
+    def summarize_items(self, items: List[RSSItem], sender_type: str = "wechat") -> str:
         """
         为多个RSS条目生成总结（保持向后兼容）
         现在改为分别总结每篇文章
 
         Args:
             items: RSS条目列表
+            sender_type: 发送源类型
 
         Returns:
             总结后的微信消息内容
@@ -148,7 +375,7 @@ class Summarizer:
 
         # 如果只有一篇文章，直接使用单篇总结
         if len(items) == 1:
-            return self.summarize_single_item(items[0])
+            return self.summarize_single_item(items[0], sender_type)
 
         # 多篇文章时，生成简化的汇总
         try:

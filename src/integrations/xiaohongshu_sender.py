@@ -62,11 +62,30 @@ class XiaohongshuSender(BaseSender):
     def _extract_title(self, message: str) -> str:
         """从消息中提取标题"""
         lines = message.strip().split('\n')
-        # 取第一行非空内容作为标题，并清理格式
+        
+        # 首先寻找明确标记的标题部分 (小红书版本)
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # 寻找 "✨ **吸睛标题**:" 或类似格式的标题
+            if ('✨' in line and ('吸睛标题' in line or '标题' in line)) or \
+               ('**' in line and ('标题' in line or '吸睛标题' in line)):
+                # 提取标题内容，去除标记符号
+                title_content = line
+                for marker in ['✨', '**吸睛标题**:', '**标题**:', '吸睛标题:', '标题:', '**', '*']:
+                    title_content = title_content.replace(marker, '')
+                title_content = title_content.strip()
+                if title_content and len(title_content) > 5:
+                    return title_content[:30]  # 小红书标题长度限制
+        
+        # 如果没找到明确标记的标题，按原来的逻辑查找
         for line in lines:
             clean_line = line.strip().replace('📰', '').replace('🔥', '').replace('#', '').strip()
             if clean_line and len(clean_line) > 5:
                 return clean_line[:30]  # 小红书标题长度限制
+                
         return "科技资讯分享"
     
     def _format_content(self, message: str) -> str:
