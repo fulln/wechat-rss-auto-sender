@@ -131,6 +131,9 @@ class Summarizer:
                     ]
                 )
                 
+                # 应用微信公众号样式优化
+                html_content = self.apply_wechat_styles(html_content)
+                
                 # 进一步清理HTML
                 html_content = self.clean_content_for_wechat(html_content)
                 
@@ -143,6 +146,75 @@ class Summarizer:
         except Exception as e:
             logger.error(f"Markdown转HTML失败: {e}")
             return self._simple_markdown_to_html(text)
+
+    def apply_wechat_styles(self, html_content: str) -> str:
+        """为HTML内容应用清新的微信公众号样式"""
+        try:
+            from bs4 import BeautifulSoup
+            
+            # 解析HTML
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # 定义清新的CSS样式
+            styles = {
+                'h1': 'font-size: 24px; color: #2c3e50; font-weight: 600; margin: 20px 0 15px 0; padding-bottom: 8px; border-bottom: 2px solid #3498db;',
+                'h2': 'font-size: 20px; color: #34495e; font-weight: 600; margin: 18px 0 12px 0; padding-left: 12px; border-left: 4px solid #e74c3c;',
+                'h3': 'font-size: 18px; color: #2c3e50; font-weight: 600; margin: 16px 0 10px 0; padding: 8px 12px; background: linear-gradient(90deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 4px;',
+                'p': 'line-height: 1.8; margin: 12px 0; color: #2c3e50; font-size: 16px;',
+                'ul': 'margin: 16px 0; padding-left: 0;',
+                'ol': 'margin: 16px 0; padding-left: 0;',
+                'li': 'line-height: 1.7; margin: 8px 0 8px 20px; color: #2c3e50; position: relative; list-style: none;',
+                'strong': 'color: #e74c3c; font-weight: 600;',
+                'em': 'color: #8e44ad; font-style: italic;',
+                'blockquote': 'margin: 20px 0; padding: 15px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; border-left: 4px solid #3498db; font-style: italic;',
+                'table': 'width: 100%; border-collapse: collapse; margin: 20px 0; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);',
+                'th': 'background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px; text-align: left; font-weight: 600;',
+                'td': 'padding: 12px; border-bottom: 1px solid #ecf0f1; color: #2c3e50;',
+                'a': 'color: #3498db; text-decoration: none; border-bottom: 1px dotted #3498db;',
+                'code': 'background: #f8f9fa; color: #e74c3c; padding: 2px 6px; border-radius: 4px; font-family: "Monaco", "Consolas", monospace; font-size: 14px;'
+            }
+            
+            # 应用样式到对应标签
+            for tag_name, style in styles.items():
+                tags = soup.find_all(tag_name)
+                for tag in tags:
+                    existing_style = tag.get('style', '')
+                    # 合并样式，新样式优先
+                    combined_style = f"{style} {existing_style}".strip()
+                    tag['style'] = combined_style
+            
+            # 为无序列表项添加自定义项目符号
+            ul_tags = soup.find_all('ul')
+            for ul in ul_tags:
+                li_tags = ul.find_all('li', recursive=False)
+                for i, li in enumerate(li_tags):
+                    # 添加彩色圆点作为项目符号
+                    colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6']
+                    color = colors[i % len(colors)]
+                    # 使用Unicode圆点符号
+                    if li.string:
+                        li.string = f"● {li.get_text()}"
+                    else:
+                        # 如果li包含其他标签，在开头插入圆点
+                        bullet_span = soup.new_tag('span', style=f'color: {color}; margin-right: 8px;')
+                        bullet_span.string = '●'
+                        li.insert(0, bullet_span)
+            
+            # 为有序列表项添加样式化编号
+            ol_tags = soup.find_all('ol')
+            for ol in ol_tags:
+                li_tags = ol.find_all('li', recursive=False)
+                for i, li in enumerate(li_tags, 1):
+                    # 添加样式化编号
+                    number_span = soup.new_tag('span', style='display: inline-block; width: 24px; height: 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-align: center; border-radius: 50%; margin-right: 10px; font-size: 14px; line-height: 24px; font-weight: 600;')
+                    number_span.string = str(i)
+                    li.insert(0, number_span)
+            
+            return str(soup)
+            
+        except Exception as e:
+            logger.warning(f"样式应用失败，返回原始HTML: {e}")
+            return html_content
     
     def _simple_markdown_to_html(self, text: str) -> str:
         """简单的Markdown到HTML转换（备用方案）"""
@@ -208,6 +280,9 @@ class Summarizer:
         
         result = '\n\n'.join(html_paragraphs)
         
+        # 应用样式优化
+        result = self.apply_wechat_styles(result)
+        
         # 最后清理
         return result
 
@@ -255,7 +330,7 @@ class Summarizer:
         try:
             _, metadata = self._extract_article_metadata(content)
             return metadata.get('score', 5.0)  # 默认评分5.0
-        except:
+        except Exception:
             return 5.0
 
     def get_article_tags(self, content: str) -> list:
@@ -263,7 +338,7 @@ class Summarizer:
         try:
             _, metadata = self._extract_article_metadata(content)
             return metadata.get('tags', [])
-        except:
+        except Exception:
             return []
 
     def summarize_single_item(self, item: RSSItem, sender_type: str = "wechat") -> str:
